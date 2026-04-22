@@ -11,10 +11,12 @@ const CORE_BASE = `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist`;
 async function loadFfmpeg() {
   if (isLoaded) return;
   if (!loadingPromise) {
-    loadingPromise = ffmpeg.load({
-      coreURL: `${CORE_BASE}/ffmpeg-core.js`,
-      wasmURL: `${CORE_BASE}/ffmpeg-core.wasm`,
-    });
+    loadingPromise = ffmpeg
+      .load({
+        coreURL: `${CORE_BASE}/ffmpeg-core.js`,
+        wasmURL: `${CORE_BASE}/ffmpeg-core.wasm`,
+      })
+      .then(() => undefined);
   }
   await loadingPromise;
   isLoaded = true;
@@ -34,7 +36,7 @@ export async function transcodeWavTo(buffer: Uint8Array, format: "mp3" | "ogg") 
     await ffmpeg.exec(["-i", input, "-codec:a", "libvorbis", "-q:a", "4", output]);
   }
 
-  const data = await ffmpeg.readFile(output);
+  const data = (await ffmpeg.readFile(output)) as Uint8Array;
   await ffmpeg.deleteFile(input);
   await ffmpeg.deleteFile(output);
 

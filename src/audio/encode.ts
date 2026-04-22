@@ -37,6 +37,6 @@ export function getExportFormats(): FormatOption[] {
 export async function encodeWithWasm(buffer: AudioBuffer, format: Exclude<ExportFormat, "wav">) {
   const wavBlob = encodeWav(buffer);
   const wavData = await blobToUint8Array(wavBlob);
-  const output = await transcodeWavTo(wavData, format);
+  const output = (await transcodeWavTo(wavData, format)) as Uint8Array;
   return new Blob([output], { type: formatMime[format] });
 }

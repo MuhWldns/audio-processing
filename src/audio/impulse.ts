@@ -1,4 +1,4 @@
-export function createImpulseResponse(context: AudioContext, seconds: number, decay: number) {
+export function createImpulseResponse(context: BaseAudioContext, seconds: number, decay: number) {
   const sampleRate = context.sampleRate;
   const length = Math.max(1, Math.floor(sampleRate * seconds));
   const impulse = context.createBuffer(2, length, sampleRate);
