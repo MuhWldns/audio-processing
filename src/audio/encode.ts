@@ -38,6 +38,8 @@ export async function encodeWithWasm(buffer: AudioBuffer, format: Exclude<Export
   const wavBlob = encodeWav(buffer);
   const wavData = await blobToUint8Array(wavBlob);
   const output = (await transcodeWavTo(wavData, format)) as Uint8Array;
-  const safeCopy = new Uint8Array(output.buffer.slice(0));
+  const arrayBuffer = new ArrayBuffer(output.byteLength);
+  const safeCopy = new Uint8Array(arrayBuffer);
+  safeCopy.set(output);
   return new Blob([safeCopy], { type: formatMime[format] });
 }
