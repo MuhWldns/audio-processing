@@ -18,7 +18,7 @@ export function FileDrop({ onFile, fileName }: FileDropProps) {
       <input type="file" accept="audio/*" onChange={handleChange} />
       <div>
         <p className="file-title">Upload audio</p>
-        <p className="file-subtitle">{fileName ? fileName : "Drag a file or click to browse"}</p>
+        <p className="file-subtitle">{fileName ? fileName : "Drop a file or click to browse"}</p>
       </div>
     </label>
   );

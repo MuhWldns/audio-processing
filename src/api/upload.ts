@@ -14,6 +14,7 @@ export async function uploadProcessedAudio(file: Blob, fileName: string) {
   const response = await fetch(uploadUrl, {
     method: "POST",
     headers: apiKey ? { "x-api-key": apiKey } : undefined,
+    credentials: "include",
     body: form,
   });
 

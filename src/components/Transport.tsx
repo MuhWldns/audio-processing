@@ -27,18 +27,18 @@ export function Transport({ isReady, isPlaying, onPlay, onStop, onExport, isExpo
     <div className="transport">
       <div className="transport-buttons">
         <button className="primary" onClick={onPlay} disabled={!isReady}>
-          {isPlaying ? "Playing" : "Play"}
+          {isPlaying ? "Previewing..." : "Play preview"}
         </button>
         <button className="ghost" onClick={onStop} disabled={!isReady}>
           Stop
         </button>
         <button className="secondary" onClick={onExport} disabled={!isReady || isExporting}>
-          {isExporting ? "Exporting..." : "Download"}
+          {isExporting ? "Exporting..." : "Export"}
         </button>
       </div>
       <div className="export-format">
         <label>
-          Format
+          Export format
           <select value={exportFormat} onChange={(event) => onExportFormatChange(event.target.value)} disabled={!isReady || isExporting}>
             {exportFormats.map((format) => (
               <option key={format.value} value={format.value} disabled={!format.supported}>
@@ -52,7 +52,7 @@ export function Transport({ isReady, isPlaying, onPlay, onStop, onExport, isExpo
       <div className="transport-meta">
         <label className="toggle">
           <input type="checkbox" checked={loop} onChange={(event) => onLoopChange(event.target.checked)} disabled={!isReady} />
-          Loop
+          Loop preview
         </label>
         <div className="time">
           {formatTime(position)} / {formatTime(duration)}

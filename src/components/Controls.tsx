@@ -44,8 +44,8 @@ export function Controls({ params, onChange }: ControlsProps) {
         <Slider label="High" value={params.high} min={-12} max={12} step={0.5} unit="dB" onChange={(value) => onChange({ high: value })} />
       </div>
       <div className="control-group">
-        <h3>Coming soon</h3>
-        <p className="muted">Pitch shift and noise reduction will land next.</p>
+        <h3>More on the way</h3>
+        <p className="muted">Pitch shift and noise reduction are next.</p>
       </div>
     </div>
   );

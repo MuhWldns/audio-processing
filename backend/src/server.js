@@ -11,7 +11,7 @@ import multer from "multer";
 import session from "express-session";
 import passport from "passport";
 import { prisma } from "./prisma.js";
-import { buildMePayload, configurePassport, handleOAuthLogin, isOAuthReady } from "./auth.js";
+import { buildMePayload, configurePassport, ensureDailyAudioQuota, getAudioUsagePrice, handleOAuthLogin, isOAuthReady } from "./auth.js";
 
 dotenv.config();
 
@@ -154,7 +154,7 @@ app.get("/auth/me", async (req, res) => {
   return res.json({ user: me });
 });
 
-app.post("/upload", uploadLimiter, upload.single("file"), (req, res) => {
+app.post("/upload", requireAuth, uploadLimiter, upload.single("file"), async (req, res) => {
   const providedKey = req.header("x-api-key");
   if (!apiKey || providedKey !== apiKey) {
     return res.status(401).json({ error: "Invalid API key" });
@@ -171,9 +171,186 @@ app.post("/upload", uploadLimiter, upload.single("file"), (req, res) => {
     return res.status(400).json({ error: "Unsupported file type" });
   }
 
-  return res.status(201).json({
-    message: "Thanks for using ",
+  const userId = req.user.id;
+  const quotaUser = await ensureDailyAudioQuota(userId);
+
+  if (!quotaUser) {
+    fs.unlink(req.file.path, () => undefined);
+    return res.status(404).json({ error: "User not found" });
+  }
+
+  const price = getAudioUsagePrice(quotaUser, 1);
+  const wallet = await prisma.wallet.findUnique({ where: { userId } });
+
+  if (price.paidUnits > 0 && (!wallet || wallet.balanceTokens < price.tokenCost)) {
+    fs.unlink(req.file.path, () => undefined);
+    return res.status(402).json({
+      error: "Not enough tokens",
+      requiredTokens: price.tokenCost,
+      balanceTokens: wallet?.balanceTokens ?? 0,
+      freeRemaining: price.freeRemaining,
+    });
+  }
+
+  const storedFileName = req.file.filename;
+  const fileName = req.file.originalname;
+  const fileFormat = extension.replace(".", "");
+
+  const result = await prisma.$transaction(async (tx) => {
+    let nextFreeUsedToday = quotaUser.freeAudioUsedToday;
+
+    if (price.freeCovered > 0) {
+      nextFreeUsedToday += price.freeCovered;
+
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          freeAudioUsedToday: nextFreeUsedToday,
+          freeAudioDateKey: quotaUser.freeAudioDateKey ?? new Date().toISOString().slice(0, 10),
+        },
+      });
+    }
+
+    if (price.paidUnits > 0) {
+      const updatedWallet = await tx.wallet.update({
+        where: { userId },
+        data: {
+          balanceTokens: {
+            decrement: price.tokenCost,
+          },
+          lifetimeSpent: {
+            increment: price.tokenCost,
+          },
+        },
+      });
+
+      await tx.tokenTransaction.create({
+        data: {
+          userId,
+          walletId: updatedWallet.id,
+          type: "SETTLE",
+          amountTokens: -price.tokenCost,
+          referenceType: "UPLOAD_RECORD",
+          referenceId: storedFileName,
+          memo: `Audio upload: ${fileName}`,
+        },
+      });
+    }
+
+    const activity = await tx.activityLog.create({
+      data: {
+        userId,
+        type: "AUDIO_UPLOAD",
+        status: "SUCCESS",
+        title: "Audio uploaded",
+        description: `Saved ${fileName}`,
+        amountTokens: price.tokenCost,
+        fileName,
+        fileFormat,
+        metadata: {
+          storedFileName,
+          downloadName: fileName,
+          tokenCost: price.tokenCost,
+          freeCovered: price.freeCovered,
+          paidUnits: price.paidUnits,
+        },
+      },
+    });
+
+    const uploadRecord = await tx.uploadRecord.create({
+      data: {
+        userId,
+        fileName,
+        source: "studio",
+        fileFormat,
+        status: "COMPLETED",
+        activityLogId: activity.id,
+        metadata: {
+          storedFileName,
+          downloadName: fileName,
+          originalFileName: req.file.originalname,
+          mimeType: req.file.mimetype,
+          size: req.file.size,
+          tokenCost: price.tokenCost,
+          freeCovered: price.freeCovered,
+          paidUnits: price.paidUnits,
+          freeAudioUsedToday: nextFreeUsedToday,
+          freeAudioDailyLimit: quotaUser.freeAudioDailyLimit,
+        },
+      },
+    });
+
+    return { uploadRecord, activity };
   });
+
+  return res.status(201).json({
+    ok: true,
+    upload: {
+      id: result.uploadRecord.id,
+      fileName: result.uploadRecord.fileName,
+      fileFormat: result.uploadRecord.fileFormat,
+      createdAt: result.uploadRecord.createdAt,
+      tokenCost: result.uploadRecord.metadata?.tokenCost ?? 0,
+      freeCovered: result.uploadRecord.metadata?.freeCovered ?? 0,
+      paidUnits: result.uploadRecord.metadata?.paidUnits ?? 0,
+    },
+  });
+});
+
+app.get("/history", requireAuth, async (req, res) => {
+  const uploads = await prisma.uploadRecord.findMany({
+    where: { userId: req.user.id },
+    orderBy: { createdAt: "desc" },
+    include: { activityLog: true },
+  });
+
+  return res.json({
+    uploads: uploads.map((item) => ({
+      id: item.id,
+      fileName: item.fileName,
+      fileFormat: item.fileFormat,
+      status: item.status,
+      source: item.source,
+      durationSec: item.durationSec,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      metadata: item.metadata,
+      activity: item.activityLog
+        ? {
+            id: item.activityLog.id,
+            title: item.activityLog.title,
+            description: item.activityLog.description,
+            amountTokens: item.activityLog.amountTokens,
+            createdAt: item.activityLog.createdAt,
+          }
+        : null,
+    })),
+  });
+});
+
+app.get("/history/:id/download", requireAuth, async (req, res) => {
+  const upload = await prisma.uploadRecord.findFirst({
+    where: {
+      id: req.params.id,
+      userId: req.user.id,
+    },
+  });
+
+  if (!upload) {
+    return res.status(404).json({ error: "History item not found" });
+  }
+
+  const storedFileName = upload.metadata?.storedFileName;
+  if (!storedFileName || typeof storedFileName !== "string") {
+    return res.status(404).json({ error: "Stored file missing" });
+  }
+
+  const filePath = path.join(uploadDir, storedFileName);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "File no longer exists" });
+  }
+
+  return res.download(filePath, upload.fileName);
 });
 
 app.get("/health", (_req, res) => {
