@@ -1,0 +1,235 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum AuthProvider {
+  GOOGLE
+  DISCORD
+}
+
+enum TokenTransactionType {
+  TOP_UP
+  RESERVE
+  SETTLE
+  REFUND
+  ADJUSTMENT
+}
+
+enum UsageStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+enum ActivityType {
+  LOGIN
+  LOGOUT
+  TOP_UP
+  TOKEN_USAGE
+  AUDIO_EXPORT
+  AUDIO_UPLOAD
+  FAILED_ACTION
+  REFUND
+  ROLLBACK
+}
+
+enum ActivityStatus {
+  INFO
+  SUCCESS
+  PENDING
+  FAILED
+}
+
+model User {
+  id             String            @id @default(cuid())
+  username       String?           @unique @db.VarChar(191)
+  fullName       String?           @db.VarChar(191)
+  email          String?           @unique @db.VarChar(191)
+  displayName    String?           @db.VarChar(191)
+  avatarUrl      String?           @db.VarChar(512)
+  isEmailVerified Boolean           @default(false)
+  lastLoginAt    DateTime?
+  lastLoginProvider AuthProvider?
+  freeAudioDateKey String?         @db.VarChar(10)
+  freeAudioUsedToday Int            @default(0)
+  freeAudioDailyLimit Int           @default(3)
+  paidAudioTokenCost Int            @default(1)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  accounts       OAuthAccount[]
+  sessions       Session[]
+  wallet         Wallet?
+  tokenLedger    TokenTransaction[]
+  usageEvents    UsageEvent[]
+  activities     ActivityLog[]
+  uploadRecords  UploadRecord[]
+  topUpOrders    TopUpOrder[]
+
+  @@index([email])
+  @@index([username])
+  @@index([lastLoginAt])
+}
+
+model OAuthAccount {
+  id                String       @id @default(cuid())
+  userId            String
+  provider          AuthProvider
+  providerAccountId String       @db.VarChar(191)
+  accessToken       String?      @db.Text
+  refreshToken      String?      @db.Text
+  expiresAt         DateTime?
+  scope             String?      @db.VarChar(512)
+  tokenType         String?      @db.VarChar(64)
+  idToken           String?      @db.Text
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id            String   @id @default(cuid())
+  userId        String
+  sessionToken  String   @unique @db.VarChar(191)
+  expiresAt     DateTime
+  ipAddress     String?  @db.VarChar(64)
+  userAgent     String?  @db.VarChar(512)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Wallet {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  balanceTokens    Int      @default(0)
+  reservedTokens   Int      @default(0)
+  lifetimeTopUp    Int      @default(0)
+  lifetimeSpent    Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions     TokenTransaction[]
+  usageEvents      UsageEvent[]
+  topUpOrders      TopUpOrder[]
+}
+
+model TokenTransaction {
+  id             String                @id @default(cuid())
+  userId         String
+  walletId       String
+  type           TokenTransactionType
+  amountTokens   Int
+  referenceType  String?               @db.VarChar(64)
+  referenceId    String?               @db.VarChar(191)
+  memo           String?               @db.VarChar(512)
+  createdAt      DateTime              @default(now())
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet         Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([walletId])
+  @@index([type])
+  @@index([referenceType, referenceId])
+}
+
+model UsageEvent {
+  id                String       @id @default(cuid())
+  userId            String
+  walletId          String
+  status            UsageStatus  @default(PENDING)
+  audioDurationSec  Int
+  exportFormat      String       @db.VarChar(32)
+  tokenCost         Int
+  reservedTokens    Int          @default(0)
+  settledTokens     Int          @default(0)
+  metadata          Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  completedAt       DateTime?
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet            Wallet       @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([walletId])
+  @@index([status])
+}
+
+model ActivityLog {
+  id            String          @id @default(cuid())
+  userId        String
+  type          ActivityType
+  status        ActivityStatus  @default(INFO)
+  title         String          @db.VarChar(191)
+  description   String?         @db.VarChar(512)
+  amountTokens  Int?
+  fileName      String?         @db.VarChar(255)
+  fileFormat    String?         @db.VarChar(32)
+  metadata      Json?
+  createdAt     DateTime        @default(now())
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  uploadRecord  UploadRecord?   @relation("UploadRecordActivityLog")
+  topUpOrder    TopUpOrder?     @relation("TopUpOrderActivityLog")
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model UploadRecord {
+  id             String       @id @default(cuid())
+  userId         String
+  fileName       String       @db.VarChar(255)
+  source         String?      @db.VarChar(64)
+  fileFormat     String       @db.VarChar(32)
+  durationSec    Int?
+  speedFactor    Decimal?     @db.Decimal(6, 2)
+  amplification  Decimal?     @db.Decimal(6, 2)
+  status         UsageStatus  @default(PENDING)
+  activityLogId  String?      @unique
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activityLog    ActivityLog? @relation("UploadRecordActivityLog", fields: [activityLogId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([fileFormat])
+}
+
+model TopUpOrder {
+  id            String       @id @default(cuid())
+  userId        String
+  walletId      String
+  provider      String       @db.VarChar(64)
+  externalId    String?      @unique @db.VarChar(191)
+  currency      String       @db.VarChar(16)
+  amountPaid    Decimal      @db.Decimal(12, 2)
+  tokensBought  Int
+  status        UsageStatus  @default(PENDING)
+  activityLogId String?      @unique
+  metadata      Json?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet        Wallet       @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  activityLog   ActivityLog? @relation("TopUpOrderActivityLog", fields: [activityLogId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([walletId])
+  @@index([status])
+  @@index([provider])
+}
