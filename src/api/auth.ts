@@ -12,6 +12,7 @@ export type AuthUser = {
     reservedTokens: number;
     lifetimeTopUp: number;
     lifetimeSpent: number;
+    availableTokens?: number;
   } | null;
   freeAudio: {
     dateKey: string;

@@ -1,22 +1,25 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
+import coreURL from "@ffmpeg/core?url";
+import wasmURL from "@ffmpeg/core/wasm?url";
 
 const ffmpeg = new FFmpeg();
 let isLoaded = false;
 let loadingPromise: Promise<void> | null = null;
-
-const CORE_VERSION = "0.12.6";
-const CORE_BASE = `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist`;
 
 async function loadFfmpeg() {
   if (isLoaded) return;
   if (!loadingPromise) {
     loadingPromise = ffmpeg
       .load({
-        coreURL: `${CORE_BASE}/ffmpeg-core.js`,
-        wasmURL: `${CORE_BASE}/ffmpeg-core.wasm`,
+        coreURL,
+        wasmURL,
       })
-      .then(() => undefined);
+      .then(() => undefined)
+      .catch((error) => {
+        loadingPromise = null;
+        throw error;
+      });
   }
   await loadingPromise;
   isLoaded = true;

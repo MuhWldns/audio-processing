@@ -227,6 +227,11 @@
   color: var(--text);
 }
 
+.export-format select option {
+  background: #120b25;
+  color: var(--text);
+}
+
 .export-format select:disabled {
   opacity: 0.6;
 }

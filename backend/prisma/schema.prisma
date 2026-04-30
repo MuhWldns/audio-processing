@@ -60,6 +60,10 @@ model User {
   freeAudioUsedToday Int            @default(0)
   freeAudioDailyLimit Int           @default(3)
   paidAudioTokenCost Int            @default(1)
+  // Rupiah wallet fields
+  walletBalanceRupiah Int           @default(0)
+  totalTopUpRupiah    Int           @default(0)
+  totalSpentRupiah    Int           @default(0)
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   accounts       OAuthAccount[]
@@ -70,10 +74,14 @@ model User {
   activities     ActivityLog[]
   uploadRecords  UploadRecord[]
   topUpOrders    TopUpOrder[]
+  topUpTransactions TopUpTransaction[]
+  serviceTransactions ServiceTransaction[]
 
   @@index([email])
   @@index([username])
   @@index([lastLoginAt])
+  @@index([walletBalanceRupiah])
+  @@index([totalSpentRupiah])
 }
 
 model OAuthAccount {
@@ -232,4 +240,42 @@ model TopUpOrder {
   @@index([walletId])
   @@index([status])
   @@index([provider])
+}
+
+model TopUpTransaction {
+  id              String   @id @default(cuid())
+  userId          String
+  amountRupiah    Int      // Jumlah top up dalam Rupiah
+  paymentGateway  String   @db.VarChar(64)  // 'midtrans', 'xendit', etc.
+  paymentId       String?  @unique @db.VarChar(191)  // ID dari payment gateway
+  status          String   @db.VarChar(32) @default("pending")  // pending, completed, failed, refunded
+  metadata        Json?    // Payment gateway response data
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([paymentGateway])
+  @@index([createdAt])
+}
+
+model ServiceTransaction {
+  id              String   @id @default(cuid())
+  userId          String
+  amountRupiah    Int      // Biaya service dalam Rupiah
+  durationSeconds Int      // Durasi processing dalam detik
+  processingType  String   @db.VarChar(32) @default("basic")  // basic, advanced
+  serviceType     String   @db.VarChar(32) @default("audio_processing")  // audio_processing, export, etc.
+  status          String   @db.VarChar(32) @default("pending")  // pending, completed, failed
+  metadata        Json?    // File info, processing parameters
+  createdAt       DateTime @default(now())
+  
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([serviceType])
+  @@index([createdAt])
 }

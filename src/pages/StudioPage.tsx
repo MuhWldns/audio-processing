@@ -45,10 +45,27 @@ export function StudioPage() {
       anchor.remove();
       URL.revokeObjectURL(url);
 
-      await uploadProcessedAudio(audioBlob, downloadName);
-      setExportMessage("Selesai.");
-    } catch {
-      setExportMessage("Ekspor gagal.");
+      setExportMessage("Export complete. File saved locally.");
+
+      // Upload sebagai background process (fire-and-forget)
+      // Tidak menampilkan error ke user jika upload gagal
+      uploadProcessedAudio(audioBlob, downloadName)
+        .then(uploadResult => {
+          if (uploadResult) {
+            // Jika upload berhasil, update message dengan info token
+            setExportMessage(
+              `Export complete! Uploaded to your account. ` +
+              `Used ${uploadResult.upload.freeCovered} free upload(s) ` +
+              `and ${uploadResult.upload.paidUnits} paid upload(s) (${uploadResult.upload.tokenCost} token(s)).`
+            );
+          }
+          // Jika upload gagal (null), tidak update message - biarkan user tetap senang file sudah ter-export
+        })
+        .catch(() => {
+          // Ignore semua error - proses upload di background saja
+        });
+    } catch (exportError) {
+      setExportMessage("Export failed. Please try again.");
     } finally {
       setIsExporting(false);
     }
@@ -58,10 +75,10 @@ export function StudioPage() {
     <div className="app">
       <header className="hero">
         <div>
-          <p className="eyebrow">Studio</p>
+          <p className="eyebrow">Editor</p>
           <p className="ownership">Edit and export your audio</p>
           <h1>Make small adjustments, preview the result, and export your track.</h1>
-          <p className="lead">Load a file, fine-tune the sound, and save it in the format you need.</p>
+          <p className="lead">Load a file, fine-tune the sound, and save it as WAV.</p>
         </div>
         <div className="hero-card">
           <FileDrop onFile={handleFile} fileName={fileName ?? undefined} />

@@ -11,19 +11,19 @@
     "prisma:studio": "prisma studio"
   },
   "dependencies": {
+    "@prisma/client": "^6.7.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "express-session": "^1.18.1",
     "express-rate-limit": "^7.4.0",
+    "express-session": "^1.18.1",
     "helmet": "^8.0.0",
     "multer": "^1.4.5-lts.1",
     "passport": "^0.7.0",
     "passport-discord": "^0.1.4",
     "passport-google-oauth20": "^2.0.0",
-    "zod": "^3.25.76",
-    "@prisma/client": "^6.7.0"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "prisma": "^6.7.0"

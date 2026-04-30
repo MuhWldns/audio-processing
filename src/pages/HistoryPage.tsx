@@ -38,7 +38,7 @@ export function HistoryPage() {
       <div className="panel space-y-4">
         {isLoading ? <p className="text-slate-300">Loading your saved tracks...</p> : null}
         {error ? <p className="text-rose-300">{error}</p> : null}
-        {!isLoading && !error && items.length === 0 ? <p className="text-slate-300">No saved audio yet. Process one in the studio and it will show up here.</p> : null}
+        {!isLoading && !error && items.length === 0 ? <p className="text-slate-300">No saved audio yet. Process one in the editor and it will show up here.</p> : null}
 
         <div className="grid gap-4">
           {items.map((item) => {
@@ -55,7 +55,7 @@ export function HistoryPage() {
                     <p className="text-sm text-slate-300">
                       Format: {item.fileFormat.toUpperCase()} · Saved {formatDate(item.createdAt)}
                     </p>
-                    <p className="text-sm text-slate-300">{item.activity?.description || "Saved from the studio."}</p>
+                    <p className="text-sm text-slate-300">{item.activity?.description || "Saved from the editor."}</p>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">

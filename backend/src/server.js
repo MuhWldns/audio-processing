@@ -1,17 +1,35 @@
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import cookieParser from "cookie-parser";
-import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
-import rateLimit from "express-rate-limit";
 import helmet from "helmet";
-import multer from "multer";
+import cors from "cors";
+import cookieParser from "cookie-parser";
 import session from "express-session";
 import passport from "passport";
-import { prisma } from "./prisma.js";
-import { buildMePayload, configurePassport, ensureDailyAudioQuota, getAudioUsagePrice, handleOAuthLogin, isOAuthReady } from "./auth.js";
+
+// Config
+import { configurePassport } from "./services/authService.js";
+
+// Middlewares
+import { ensureAuthReady, requireAuth, createUploadLimiter, validateApiKey, validateAudioFile } from "./middlewares/index.js";
+import { configureMulter } from "./services/uploadService.js";
+
+// Controllers
+import {
+  handleGoogleCallback,
+  handleDiscordCallback,
+  handleLogout,
+  handleGetMe,
+  handleUpload,
+  handleGetHistory,
+  handleDownloadHistory,
+  handleHealthCheck,
+  handleDbHealthCheck,
+} from "./controllers/index.js";
+
+// Config
+import { UPLOAD_RATE_LIMIT, DEFAULT_SESSION_MAX_AGE } from "./config/index.js";
 
 dotenv.config();
 
@@ -20,34 +38,31 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT ? Number(process.env.PORT) : 3001;
+
+// Environment variables
 const apiKey = process.env.UPLOAD_API_KEY || "";
 const sessionSecret = process.env.SESSION_SECRET || "replace-me";
 const frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN || "http://localhost:5173";
 const uploadDir = path.join(__dirname, "..", "uploads");
-const allowedExtensions = new Set([".wav", ".mp3", ".ogg"]);
-const allowedMimeTypes = new Set(["audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3", "audio/ogg", "audio/ogg; codecs=opus"]);
-const rateLimitWindowMinutes = process.env.UPLOAD_RATE_WINDOW_MIN ? Number(process.env.UPLOAD_RATE_WINDOW_MIN) : 15;
-const rateLimitMax = process.env.UPLOAD_RATE_LIMIT ? Number(process.env.UPLOAD_RATE_LIMIT) : 30;
 
+// Configure passport
 configurePassport();
 
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// Configure multer
+const upload = configureMulter(uploadDir);
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename: (_req, file, cb) => {
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const stamp = Date.now();
-    cb(null, `${stamp}-${safeName}`);
-  },
+// Configure rate limiter
+const uploadLimiter = createUploadLimiter({
+  windowMinutes: process.env.UPLOAD_RATE_WINDOW_MIN
+    ? Number(process.env.UPLOAD_RATE_WINDOW_MIN)
+    : UPLOAD_RATE_LIMIT.WINDOW_MINUTES,
+  maxRequests: process.env.UPLOAD_RATE_LIMIT
+    ? Number(process.env.UPLOAD_RATE_LIMIT)
+    : UPLOAD_RATE_LIMIT.MAX_REQUESTS,
 });
 
-const upload = multer({ storage });
-
+// Middleware setup
 app.set("trust proxy", 1);
-
 app.use(helmet());
 app.use(
   cors({
@@ -55,7 +70,6 @@ app.use(
     credentials: true,
   }),
 );
-
 app.use(cookieParser());
 app.use(express.json());
 app.use(
@@ -67,315 +81,76 @@ app.use(
       httpOnly: true,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
-      maxAge: 1000 * 60 * 60 * 24 * 7,
+      maxAge: DEFAULT_SESSION_MAX_AGE,
     },
   }),
 );
 app.use(passport.initialize());
 app.use(passport.session());
 
-const uploadLimiter = rateLimit({
-  windowMs: rateLimitWindowMinutes * 60 * 1000,
-  limit: rateLimitMax,
-  standardHeaders: "draft-7",
-  legacyHeaders: false,
-  message: { error: "Too many uploads, please try again later." },
-});
+// ==================== ROUTES ====================
 
-const ensureAuthReady = (provider) => (_req, res, next) => {
-  if (!isOAuthReady(provider)) {
-    return res.status(503).json({
-      error: `${provider} auth is not configured`,
-    });
-  }
-
-  return next();
-};
-
-const requireAuth = (req, res, next) => {
-  if (req.isAuthenticated?.() && req.user) {
-    return next();
-  }
-
-  return res.status(401).json({ error: "Not authenticated" });
-};
-
+// Auth routes
 app.get("/auth/google", ensureAuthReady("google"), passport.authenticate("google", { scope: ["email", "profile"] }));
+app.get(
+  "/auth/google/callback",
+  ensureAuthReady("google"),
+  passport.authenticate("google", { failureRedirect: `${frontendUrl}/?login=failed` }),
+  handleGoogleCallback,
+);
 
-app.get("/auth/google/callback", ensureAuthReady("google"), passport.authenticate("google", { failureRedirect: `${frontendUrl}/?login=failed` }), async (req, res) => {
-  if (req.user) {
-    await handleOAuthLogin({ userId: req.user.id, provider: "GOOGLE", providerLabel: "Google" });
-  }
+app.get("/auth/discord", ensureAuthReady("discord"), passport.authenticate("discord", { scope: ["identify", "email"] }));
+app.get(
+  "/auth/discord/callback",
+  ensureAuthReady("discord"),
+  passport.authenticate("discord", { failureRedirect: `${frontendUrl}/?login=failed` }),
+  handleDiscordCallback,
+);
 
-  return res.redirect(`${frontendUrl}/studio?login=success`);
-});
+app.post("/auth/logout", requireAuth, handleLogout);
+app.get("/auth/me", handleGetMe);
 
-app.get("/auth/discord", ensureAuthReady("discord"), passport.authenticate("discord"));
+// Upload routes
+app.post(
+  "/upload",
+  requireAuth,
+  uploadLimiter,
+  validateApiKey(apiKey),
+  upload.single("file"),
+  validateAudioFile(),
+  handleUpload,
+);
 
-app.get("/auth/discord/callback", ensureAuthReady("discord"), passport.authenticate("discord", { failureRedirect: `${frontendUrl}/?login=failed` }), async (req, res) => {
-  if (req.user) {
-    await handleOAuthLogin({ userId: req.user.id, provider: "DISCORD", providerLabel: "Discord" });
-  }
+// History routes
+app.get("/history", requireAuth, handleGetHistory);
+app.get("/history/:id/download", requireAuth, handleDownloadHistory);
 
-  return res.redirect(`${frontendUrl}/studio?login=success`);
-});
+// Health check routes
+app.get("/health", handleHealthCheck);
+app.get("/db-health", handleDbHealthCheck);
 
-app.post("/auth/logout", requireAuth, async (req, res, next) => {
-  const userId = req.user.id;
-
-  req.logout((error) => {
-    if (error) {
-      return next(error);
-    }
-
-    req.session.destroy(async () => {
-      await prisma.activityLog.create({
-        data: {
-          userId,
-          type: "LOGOUT",
-          status: "SUCCESS",
-          title: "Signed out",
-          description: "User signed out",
-        },
-      });
-
-      res.clearCookie("connect.sid");
-      return res.json({ ok: true });
-    });
+// Error handling middleware (basic)
+app.use((err, req, res, next) => {
+  console.error("Server error:", err);
+  res.status(err.status || 500).json({
+    error: process.env.NODE_ENV === "production" ? "Internal server error" : err.message,
   });
 });
 
-app.get("/auth/me", async (req, res) => {
-  if (!req.user) {
-    return res.status(200).json({ user: null });
-  }
+// Graceful shutdown
+import { prisma } from "./prisma.js";
 
-  const me = await buildMePayload(req.user.id);
-  return res.json({ user: me });
-});
-
-app.post("/upload", requireAuth, uploadLimiter, upload.single("file"), async (req, res) => {
-  const providedKey = req.header("x-api-key");
-  if (!apiKey || providedKey !== apiKey) {
-    return res.status(401).json({ error: "Invalid API key" });
-  }
-
-  if (!req.file) {
-    return res.status(400).json({ error: "Missing file" });
-  }
-
-  const extension = path.extname(req.file.originalname).toLowerCase();
-  const isAllowed = allowedExtensions.has(extension) && allowedMimeTypes.has(req.file.mimetype);
-  if (!isAllowed) {
-    fs.unlink(req.file.path, () => undefined);
-    return res.status(400).json({ error: "Unsupported file type" });
-  }
-
-  const userId = req.user.id;
-  const quotaUser = await ensureDailyAudioQuota(userId);
-
-  if (!quotaUser) {
-    fs.unlink(req.file.path, () => undefined);
-    return res.status(404).json({ error: "User not found" });
-  }
-
-  const price = getAudioUsagePrice(quotaUser, 1);
-  const wallet = await prisma.wallet.findUnique({ where: { userId } });
-
-  if (price.paidUnits > 0 && (!wallet || wallet.balanceTokens < price.tokenCost)) {
-    fs.unlink(req.file.path, () => undefined);
-    return res.status(402).json({
-      error: "Not enough tokens",
-      requiredTokens: price.tokenCost,
-      balanceTokens: wallet?.balanceTokens ?? 0,
-      freeRemaining: price.freeRemaining,
-    });
-  }
-
-  const storedFileName = req.file.filename;
-  const fileName = req.file.originalname;
-  const fileFormat = extension.replace(".", "");
-
-  const result = await prisma.$transaction(async (tx) => {
-    let nextFreeUsedToday = quotaUser.freeAudioUsedToday;
-
-    if (price.freeCovered > 0) {
-      nextFreeUsedToday += price.freeCovered;
-
-      await tx.user.update({
-        where: { id: userId },
-        data: {
-          freeAudioUsedToday: nextFreeUsedToday,
-          freeAudioDateKey: quotaUser.freeAudioDateKey ?? new Date().toISOString().slice(0, 10),
-        },
-      });
-    }
-
-    if (price.paidUnits > 0) {
-      const updatedWallet = await tx.wallet.update({
-        where: { userId },
-        data: {
-          balanceTokens: {
-            decrement: price.tokenCost,
-          },
-          lifetimeSpent: {
-            increment: price.tokenCost,
-          },
-        },
-      });
-
-      await tx.tokenTransaction.create({
-        data: {
-          userId,
-          walletId: updatedWallet.id,
-          type: "SETTLE",
-          amountTokens: -price.tokenCost,
-          referenceType: "UPLOAD_RECORD",
-          referenceId: storedFileName,
-          memo: `Audio upload: ${fileName}`,
-        },
-      });
-    }
-
-    const activity = await tx.activityLog.create({
-      data: {
-        userId,
-        type: "AUDIO_UPLOAD",
-        status: "SUCCESS",
-        title: "Audio uploaded",
-        description: `Saved ${fileName}`,
-        amountTokens: price.tokenCost,
-        fileName,
-        fileFormat,
-        metadata: {
-          storedFileName,
-          downloadName: fileName,
-          tokenCost: price.tokenCost,
-          freeCovered: price.freeCovered,
-          paidUnits: price.paidUnits,
-        },
-      },
-    });
-
-    const uploadRecord = await tx.uploadRecord.create({
-      data: {
-        userId,
-        fileName,
-        source: "studio",
-        fileFormat,
-        status: "COMPLETED",
-        activityLogId: activity.id,
-        metadata: {
-          storedFileName,
-          downloadName: fileName,
-          originalFileName: req.file.originalname,
-          mimeType: req.file.mimetype,
-          size: req.file.size,
-          tokenCost: price.tokenCost,
-          freeCovered: price.freeCovered,
-          paidUnits: price.paidUnits,
-          freeAudioUsedToday: nextFreeUsedToday,
-          freeAudioDailyLimit: quotaUser.freeAudioDailyLimit,
-        },
-      },
-    });
-
-    return { uploadRecord, activity };
-  });
-
-  return res.status(201).json({
-    ok: true,
-    upload: {
-      id: result.uploadRecord.id,
-      fileName: result.uploadRecord.fileName,
-      fileFormat: result.uploadRecord.fileFormat,
-      createdAt: result.uploadRecord.createdAt,
-      tokenCost: result.uploadRecord.metadata?.tokenCost ?? 0,
-      freeCovered: result.uploadRecord.metadata?.freeCovered ?? 0,
-      paidUnits: result.uploadRecord.metadata?.paidUnits ?? 0,
-    },
-  });
-});
-
-app.get("/history", requireAuth, async (req, res) => {
-  const uploads = await prisma.uploadRecord.findMany({
-    where: { userId: req.user.id },
-    orderBy: { createdAt: "desc" },
-    include: { activityLog: true },
-  });
-
-  return res.json({
-    uploads: uploads.map((item) => ({
-      id: item.id,
-      fileName: item.fileName,
-      fileFormat: item.fileFormat,
-      status: item.status,
-      source: item.source,
-      durationSec: item.durationSec,
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt,
-      metadata: item.metadata,
-      activity: item.activityLog
-        ? {
-            id: item.activityLog.id,
-            title: item.activityLog.title,
-            description: item.activityLog.description,
-            amountTokens: item.activityLog.amountTokens,
-            createdAt: item.activityLog.createdAt,
-          }
-        : null,
-    })),
-  });
-});
-
-app.get("/history/:id/download", requireAuth, async (req, res) => {
-  const upload = await prisma.uploadRecord.findFirst({
-    where: {
-      id: req.params.id,
-      userId: req.user.id,
-    },
-  });
-
-  if (!upload) {
-    return res.status(404).json({ error: "History item not found" });
-  }
-
-  const storedFileName = upload.metadata?.storedFileName;
-  if (!storedFileName || typeof storedFileName !== "string") {
-    return res.status(404).json({ error: "Stored file missing" });
-  }
-
-  const filePath = path.join(uploadDir, storedFileName);
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: "File no longer exists" });
-  }
-
-  return res.download(filePath, upload.fileName);
-});
-
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
-});
-
-app.get("/db-health", async (_req, res) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.json({ ok: true, database: "up" });
-  } catch {
-    res.status(500).json({ ok: false, database: "down" });
-  }
-});
-
-process.on("SIGINT", async () => {
+const shutdown = async () => {
+  console.log("Shutting down gracefully...");
   await prisma.$disconnect();
   process.exit(0);
-});
+};
 
-process.on("SIGTERM", async () => {
-  await prisma.$disconnect();
-  process.exit(0);
-});
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
+// Start server
 app.listen(port, () => {
   console.log(`Upload API listening on http://localhost:${port}`);
+  console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
 });

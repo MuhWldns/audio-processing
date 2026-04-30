@@ -1,16 +1,27 @@
+/**
+ * Service untuk business logic autentikasi
+ */
+
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { Strategy as DiscordStrategy } from "passport-discord";
-import { prisma } from "./prisma.js";
+import { prisma } from "../prisma.js";
 
-const oauthScopes = ["email", "profile"];
+const googleScopes = ["email", "profile"];
+const discordScopes = ["identify", "email"];
 const DEFAULT_DAILY_FREE_AUDIO_LIMIT = 3;
 const DEFAULT_PAID_AUDIO_TOKEN_COST = 1;
 
+// Helper functions
 const toIsoStringOrNull = (value) => (value ? new Date(value).toISOString() : null);
-const getDateKey = (date = new Date()) => date.toISOString().slice(0, 10);
+export const getDateKey = (date = new Date()) => date.toISOString().slice(0, 10);
 
-const ensureWallet = async (userId) => {
+/**
+ * Cek apakah wallet untuk user sudah ada, jika belum buat
+ * @param {string} userId - ID user
+ * @returns {Promise<Object>} Wallet object
+ */
+export const ensureWallet = async (userId) => {
   const wallet = await prisma.wallet.findUnique({ where: { userId } });
   if (wallet) {
     return wallet;
@@ -23,7 +34,12 @@ const ensureWallet = async (userId) => {
   });
 };
 
-const mapGoogleProfile = (profile) => {
+/**
+ * Mapping Google profile ke format internal
+ * @param {Object} profile - Google OAuth profile
+ * @returns {Object} Profile data
+ */
+export const mapGoogleProfile = (profile) => {
   const email = profile.emails?.[0]?.value ?? null;
   const avatarUrl = profile.photos?.[0]?.value ?? null;
 
@@ -36,7 +52,12 @@ const mapGoogleProfile = (profile) => {
   };
 };
 
-const mapDiscordProfile = (profile) => {
+/**
+ * Mapping Discord profile ke format internal
+ * @param {Object} profile - Discord OAuth profile
+ * @returns {Object} Profile data
+ */
+export const mapDiscordProfile = (profile) => {
   const email = profile.email ?? null;
   const avatarUrl = profile.avatar ? `https://cdn.discordapp.com/avatars/${profile.id}/${profile.avatar}.png` : null;
 
@@ -49,7 +70,24 @@ const mapDiscordProfile = (profile) => {
   };
 };
 
-const upsertOAuthUser = async ({ provider, providerAccountId, email, displayName, avatarUrl, accessToken, refreshToken, expiresAt, scope, tokenType, idToken }) => {
+/**
+ * Upsert user dari OAuth data
+ * @param {Object} params - OAuth parameters
+ * @returns {Promise<Object>} User object
+ */
+export const upsertOAuthUser = async ({
+  provider,
+  providerAccountId,
+  email,
+  displayName,
+  avatarUrl,
+  accessToken,
+  refreshToken,
+  expiresAt,
+  scope,
+  tokenType,
+  idToken,
+}) => {
   const account = await prisma.oAuthAccount.findUnique({
     where: {
       provider_providerAccountId: {
@@ -119,6 +157,10 @@ const upsertOAuthUser = async ({ provider, providerAccountId, email, displayName
   return user;
 };
 
+/**
+ * Konfigurasi passport untuk OAuth
+ * @returns {Object} Passport instance
+ */
 export function configurePassport() {
   passport.serializeUser((user, done) => {
     done(null, user.id);
@@ -159,7 +201,7 @@ export function configurePassport() {
               accessToken,
               refreshToken,
               expiresAt: null,
-              scope: oauthScopes.join(" "),
+              scope: googleScopes.join(" "),
               tokenType: "Bearer",
               idToken: null,
             });
@@ -184,7 +226,7 @@ export function configurePassport() {
           clientID: discordClientId,
           clientSecret: discordClientSecret,
           callbackURL: discordCallbackURL,
-          scope: oauthScopes,
+          scope: discordScopes,
         },
         async (accessToken, refreshToken, profile, done) => {
           try {
@@ -194,7 +236,7 @@ export function configurePassport() {
               accessToken,
               refreshToken,
               expiresAt: null,
-              scope: oauthScopes.join(" "),
+              scope: discordScopes.join(" "),
               tokenType: "Bearer",
               idToken: null,
             });
@@ -211,6 +253,11 @@ export function configurePassport() {
   return passport;
 }
 
+/**
+ * Cek apakah OAuth provider sudah siap
+ * @param {string} provider - Provider name ('google' atau 'discord')
+ * @returns {boolean} Status readiness
+ */
 export function isOAuthReady(provider) {
   if (provider === "google") {
     return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_CALLBACK_URL);
@@ -223,6 +270,14 @@ export function isOAuthReady(provider) {
   return false;
 }
 
+/**
+ * Buat activity log untuk autentikasi
+ * @param {string} userId - ID user
+ * @param {string} type - Tipe activity
+ * @param {string} title - Judul activity
+ * @param {string} description - Deskripsi activity
+ * @returns {Promise<Object>} Activity log object
+ */
 export async function createAuthActivity(userId, type, title, description) {
   return await prisma.activityLog.create({
     data: {
@@ -235,12 +290,24 @@ export async function createAuthActivity(userId, type, title, description) {
   });
 }
 
+/**
+ * Handle OAuth login success
+ * @param {Object} params - Login parameters
+ * @param {string} params.userId - ID user
+ * @param {string} params.provider - Provider name
+ * @param {string} params.providerLabel - Provider label untuk display
+ */
 export async function handleOAuthLogin({ userId, provider, providerLabel }) {
   await attachLoginMetadata(userId, provider);
   await createAuthActivity(userId, "LOGIN", "Signed in", `Signed in with ${providerLabel}`);
   await ensureWallet(userId);
 }
 
+/**
+ * Pastikan daily audio quota tersedia
+ * @param {string} userId - ID user
+ * @returns {Promise<Object|null>} User dengan quota data
+ */
 export async function ensureDailyAudioQuota(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -280,6 +347,12 @@ export async function ensureDailyAudioQuota(userId) {
   });
 }
 
+/**
+ * Hitung harga untuk audio usage
+ * @param {Object} user - User object dengan quota data
+ * @param {number} requestedAudioCount - Jumlah audio yang diminta
+ * @returns {Object} Price calculation result
+ */
 export function getAudioUsagePrice(user, requestedAudioCount = 1) {
   const dailyLimit = user.freeAudioDailyLimit ?? DEFAULT_DAILY_FREE_AUDIO_LIMIT;
   const paidCost = user.paidAudioTokenCost ?? DEFAULT_PAID_AUDIO_TOKEN_COST;
@@ -297,6 +370,12 @@ export function getAudioUsagePrice(user, requestedAudioCount = 1) {
   };
 }
 
+/**
+ * Record audio usage untuk user
+ * @param {string} userId - ID user
+ * @param {number} usedCount - Jumlah audio yang digunakan
+ * @returns {Promise<Object|null>} Updated user data
+ */
 export async function recordAudioUsage(userId, usedCount = 1) {
   const user = await ensureDailyAudioQuota(userId);
   if (!user) {
@@ -321,6 +400,12 @@ export async function recordAudioUsage(userId, usedCount = 1) {
   });
 }
 
+/**
+ * Attach login metadata ke user
+ * @param {string} userId - ID user
+ * @param {string} provider - Provider name
+ * @returns {Promise<Object>} Updated user
+ */
 export async function attachLoginMetadata(userId, provider) {
   return await prisma.user.update({
     where: { id: userId },
@@ -331,6 +416,11 @@ export async function attachLoginMetadata(userId, provider) {
   });
 }
 
+/**
+ * Build payload untuk /auth/me endpoint
+ * @param {string} userId - ID user
+ * @returns {Promise<Object|null>} User payload
+ */
 export async function buildMePayload(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },

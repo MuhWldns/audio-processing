@@ -28,7 +28,7 @@ export function HomePage() {
 
           <div className="space-y-4">
             <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-white sm:text-5xl lg:text-6xl">Turn your audio into a Roblox-ready track with a few simple steps.</h1>
-            <p className="max-w-2xl text-lg leading-8 text-slate-300">Adjust speed and volume, preview the result, then upload the finished file to your account.</p>
+            <p className="max-w-2xl text-lg leading-8 text-slate-300">Grab audio from YouTube or SoundCloud, tweak speed and amplification, and upload it instantly to Roblox.</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-4">
@@ -36,7 +36,7 @@ export function HomePage() {
               to="/studio"
               className="inline-flex items-center justify-center rounded-full bg-linear-to-r from-violet-500 to-fuchsia-500 px-6 py-3 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(168,85,247,0.35)] transition hover:scale-[1.02] hover:from-violet-400 hover:to-fuchsia-400"
             >
-              Open Studio
+              Open Editor
             </Link>
             <a
               href="#highlights"
