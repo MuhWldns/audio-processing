@@ -6,6 +6,7 @@ import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { StudioPage } from "./pages/StudioPage";
+import { TopUpPage } from "./pages/TopUpPage";
 
 function App() {
   return (
@@ -26,6 +27,14 @@ function App() {
           element={
             <ProtectedRoute>
               <ProfilePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="topup"
+          element={
+            <ProtectedRoute>
+              <TopUpPage />
             </ProtectedRoute>
           }
         />

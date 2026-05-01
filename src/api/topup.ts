@@ -1,78 +1,39 @@
 export type TopUpRequest = {
-  amountTokens: number;
-  paymentMethod: string;
-  paymentReference?: string;
-  memo?: string;
+  amount: number;
+  customer_name?: string;
+  customer_email?: string;
+  customer_phone?: string;
 };
 
 export type TopUpResponse = {
   ok: boolean;
-  topUpOrder: {
-    id: string;
-    userId: string;
-    walletId: string;
-    amountTokens: number;
-    paymentMethod: string;
-    paymentReference?: string;
-    status: string;
-    memo?: string;
-    createdAt: string;
-  };
-  transaction: {
-    id: string;
-    type: string;
-    amountTokens: number;
-    memo?: string;
-    createdAt: string;
-  };
-  wallet: {
-    balanceTokens: number;
-    reservedTokens: number;
-    lifetimeTopUp: number;
-    lifetimeSpent: number;
-  };
+  orderId: string;
+  invoiceId: string;
+  amount: number;
+  tokensBought: number;
+  paymentUrl?: string;
+  expiresAt?: string;
 };
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
-/**
- * Mock top-up function (for now - backend endpoint not implemented yet)
- * In production, this would call a real API endpoint
- */
-export async function processTopUp(request: TopUpRequest): Promise<TopUpResponse> {
-  // For now, simulate API call delay and return mock response
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      const mockResponse: TopUpResponse = {
-        ok: true,
-        topUpOrder: {
-          id: `topup-${Date.now()}`,
-          userId: "mock-user-id",
-          walletId: "mock-wallet-id",
-          amountTokens: request.amountTokens,
-          paymentMethod: request.paymentMethod,
-          paymentReference: request.paymentReference,
-          status: "COMPLETED",
-          memo: request.memo || `Top up ${request.amountTokens} tokens`,
-          createdAt: new Date().toISOString(),
-        },
-        transaction: {
-          id: `tx-${Date.now()}`,
-          type: "TOP_UP",
-          amountTokens: request.amountTokens,
-          memo: request.memo || `Top up ${request.amountTokens} tokens`,
-          createdAt: new Date().toISOString(),
-        },
-        wallet: {
-          balanceTokens: 1000 + request.amountTokens, // Mock balance
-          reservedTokens: 0,
-          lifetimeTopUp: 1500 + request.amountTokens,
-          lifetimeSpent: 500,
-        },
-      };
-      resolve(mockResponse);
-    }, 1500);
+export async function createTopUp(request: TopUpRequest): Promise<TopUpResponse> {
+  const response = await fetch(`${apiBaseUrl}/topup/create`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify(request),
   });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => null);
+    const errorMessage = errorData?.error || "Failed to create top up";
+    throw new Error(errorMessage);
+  }
+
+  return (await response.json()) as TopUpResponse;
 }
 
 /**

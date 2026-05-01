@@ -75,19 +75,7 @@ export const mapDiscordProfile = (profile) => {
  * @param {Object} params - OAuth parameters
  * @returns {Promise<Object>} User object
  */
-export const upsertOAuthUser = async ({
-  provider,
-  providerAccountId,
-  email,
-  displayName,
-  avatarUrl,
-  accessToken,
-  refreshToken,
-  expiresAt,
-  scope,
-  tokenType,
-  idToken,
-}) => {
+export const upsertOAuthUser = async ({ provider, providerAccountId, email, displayName, avatarUrl, accessToken, refreshToken, expiresAt, scope, tokenType, idToken }) => {
   const account = await prisma.oAuthAccount.findUnique({
     where: {
       provider_providerAccountId: {

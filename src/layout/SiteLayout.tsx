@@ -55,6 +55,9 @@ export function SiteLayout() {
             <NavLink to="/history" className={navLinkClass}>
               History
             </NavLink>
+            <NavLink to="/topup" className={navLinkClass}>
+              Top Up
+            </NavLink>
             <NavLink to="/profile" className={navLinkClass}>
               Profile
             </NavLink>
@@ -112,6 +115,9 @@ export function SiteLayout() {
               </NavLink>
               <NavLink to="/history" className={mobileNavLinkClass} onClick={() => setMobileMenuOpen(false)}>
                 History
+              </NavLink>
+              <NavLink to="/topup" className={mobileNavLinkClass} onClick={() => setMobileMenuOpen(false)}>
+                Top Up
               </NavLink>
               <NavLink to="/profile" className={mobileNavLinkClass} onClick={() => setMobileMenuOpen(false)}>
                 Profile
