@@ -26,6 +26,8 @@ import {
   handleDownloadHistory,
   handleHealthCheck,
   handleDbHealthCheck,
+  handleCreateTopUp,
+  handleBayarWebhook,
 } from "./controllers/index.js";
 
 // Config
@@ -124,6 +126,10 @@ app.post(
 // History routes
 app.get("/history", requireAuth, handleGetHistory);
 app.get("/history/:id/download", requireAuth, handleDownloadHistory);
+
+// Top up routes
+app.post("/topup/create", requireAuth, handleCreateTopUp);
+app.post("/webhooks/bayar", handleBayarWebhook);
 
 // Health check routes
 app.get("/health", handleHealthCheck);

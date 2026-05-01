@@ -586,7 +586,31 @@ Upload records create a reliable link between:
 
 ---
 
-## 18. Final Summary
+## 18. Token Charge Plan (Export + Download)
+
+### Rule Update
+
+- Upload is storage-only and does not consume tokens.
+- Token usage happens on export and on downloading history.
+- Free daily quota applies to export/download actions.
+- Retries always consume tokens.
+- Download failure is considered impossible because audio processing is client-side and backend only validates balance and settles usage.
+
+### Planned Backend Changes
+
+- Add a dedicated charge endpoint for export actions (example: `POST /export/charge`).
+- Apply charge logic inside `GET /history/:id/download` before returning the file.
+- Record token usage in the ledger as `SETTLE` and log activity as `AUDIO_EXPORT` or `TOKEN_USAGE`.
+- Keep upload endpoint as storage + history only.
+
+### Planned Frontend Changes
+
+- Call the export charge endpoint when the user exports.
+- Keep history download charge handled by backend (no client-side calculation).
+
+---
+
+## 19. Final Summary
 
 This project is already more than a simple audio editor. It is evolving into a full product with:
 
