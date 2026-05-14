@@ -1,0 +1,2491 @@
+﻿openapi: 3.0.3
+info:
+  title: RBX Royale API
+  version: 1.0.0
+  description: |
+    Backend API for RBX Royale platform.
+    Services: Audio Processing, Script Store, License Management, Wallet/Top-Up.
+    Currency: Indonesian Rupiah (IDR).
+    Auth: Session-based (cookie connect.sid) via Google/Discord OAuth.
+
+servers:
+  - url: http://localhost:3001
+    description: Development
+
+tags:
+  - name: Health
+    description: Server and database health checks
+  - name: Auth
+    description: Authentication (OAuth, session management)
+  - name: Upload
+    description: Audio file upload
+  - name: History
+    description: Audio upload history
+  - name: TopUp
+    description: Wallet top-up via Bayar.gg QRIS
+  - name: Products
+    description: Script store product catalog (public)
+  - name: Cart
+    description: Shopping cart management
+  - name: Checkout
+    description: Purchase and payment
+  - name: Licenses
+    description: License management and game whitelist
+  - name: Verification
+    description: License verification (called from Roblox games)
+  - name: Admin
+    description: Admin panel endpoints (requires ADMIN role)
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Basic health check
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: Server is running
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+              example:
+                ok: true
+
+  /db-health:
+    get:
+      tags: [Health]
+      summary: Database connectivity check
+      operationId: getDbHealth
+      security: []
+      responses:
+        "200":
+          description: Database is connected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  database:
+                    type: string
+              example:
+                ok: true
+                database: up
+        "500":
+          description: Database is down
+          content:
+            application/json:
+              example:
+                ok: false
+                database: down
+
+  /auth/google:
+    get:
+      tags: [Auth]
+      summary: Initiate Google OAuth login
+      operationId: authGoogle
+      security: []
+      description: Redirects user to Google consent screen
+      responses:
+        "302":
+          description: Redirect to Google OAuth
+        "503":
+          description: Google auth not configured
+          content:
+            application/json:
+              example:
+                error: "google auth is not configured"
+
+  /auth/google/callback:
+    get:
+      tags: [Auth]
+      summary: Google OAuth callback
+      operationId: authGoogleCallback
+      security: []
+      description: Handles Google OAuth callback, creates session, redirects to frontend
+      responses:
+        "302":
+          description: Redirect to frontend with login result
+
+  /auth/discord:
+    get:
+      tags: [Auth]
+      summary: Initiate Discord OAuth login
+      operationId: authDiscord
+      security: []
+      description: Redirects user to Discord consent screen
+      responses:
+        "302":
+          description: Redirect to Discord OAuth
+        "503":
+          description: Discord auth not configured
+          content:
+            application/json:
+              example:
+                error: "discord auth is not configured"
+
+  /auth/discord/callback:
+    get:
+      tags: [Auth]
+      summary: Discord OAuth callback
+      operationId: authDiscordCallback
+      security: []
+      description: Handles Discord OAuth callback, creates session, redirects to frontend
+      responses:
+        "302":
+          description: Redirect to frontend with login result
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout current user
+      operationId: authLogout
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Logged out successfully
+          content:
+            application/json:
+              example:
+                ok: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current authenticated user
+      operationId: authMe
+      security: []
+      description: Returns current user profile or null if not authenticated
+      responses:
+        "200":
+          description: Current user (or null)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: object
+                    nullable: true
+                    description: User object or null if not authenticated
+                    properties:
+                      id:
+                        type: string
+                      email:
+                        type: string
+                      displayName:
+                        type: string
+                      avatarUrl:
+                        type: string
+                        nullable: true
+                      walletBalance:
+                        type: integer
+                        description: Current balance in Rupiah
+                      totalTopUp:
+                        type: integer
+                      totalSpent:
+                        type: integer
+                      freeAudioUsedToday:
+                        type: integer
+                      freeAudioDailyLimit:
+                        type: integer
+                      role:
+                        type: string
+                      createdAt:
+                        type: string
+                        format: date-time
+              examples:
+                authenticated:
+                  summary: Logged in user
+                  value:
+                    user:
+                      id: "clx1abc123"
+                      email: "dev@rbxroyale.com"
+                      displayName: "RBX Dev"
+                      avatarUrl: "https://lh3.googleusercontent.com/photo.jpg"
+                      walletBalance: 50000
+                      totalTopUp: 100000
+                      totalSpent: 50000
+                      freeAudioUsedToday: 1
+                      freeAudioDailyLimit: 3
+                      role: "USER"
+                      createdAt: "2026-05-01T10:00:00.000Z"
+                notAuthenticated:
+                  summary: Not logged in
+                  value:
+                    user: null
+
+  /auth/dev-login:
+    post:
+      tags: [Auth]
+      summary: Dev-only login (non-production)
+      operationId: authDevLogin
+      security: []
+      description: |
+        Creates a session without OAuth flow. Only available when NODE_ENV !== "production".
+        Finds or creates user by email, auto-creates wallet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                displayName:
+                  type: string
+            example:
+              email: "test@example.com"
+              displayName: "Test User"
+      responses:
+        "200":
+          description: Dev login successful
+          content:
+            application/json:
+              example:
+                ok: true
+                message: "Dev login successful"
+                user:
+                  id: "clx1abc123"
+                  email: "test@example.com"
+                  displayName: "Test User"
+        "400":
+          description: Missing email
+          content:
+            application/json:
+              example:
+                error: "email is required"
+        "404":
+          description: Not available in production
+          content:
+            application/json:
+              example:
+                error: "Not found"
+
+  /upload:
+    post:
+      tags: [Upload]
+      summary: Upload processed audio file
+      operationId: uploadAudio
+      security:
+        - cookieAuth: []
+        - apiKeyHeader: []
+      description: |
+        Upload an audio file. Checks daily free quota (3/day), deducts from wallet balance if quota exceeded.
+        Rate limited: 30 requests per 15 minutes.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: "Audio file (.wav, .mp3, .ogg)"
+      responses:
+        "201":
+          description: Upload successful
+          content:
+            application/json:
+              example:
+                ok: true
+                upload:
+                  id: "clx2upload1"
+                  fileName: "my-audio.wav"
+                  fileFormat: "wav"
+                  createdAt: "2026-05-14T10:00:00.000Z"
+                  cost: 0
+                  freeCovered: 1
+                  paidUnits: 0
+        "400":
+          description: Missing or invalid file
+          content:
+            application/json:
+              example:
+                error: "Missing file"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          description: Insufficient balance
+          content:
+            application/json:
+              example:
+                error: "Insufficient balance"
+                required: 2000
+                balance: 500
+                freeRemaining: 0
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              example:
+                error: "Too many uploads, please try again later."
+
+  /history:
+    get:
+      tags: [History]
+      summary: Get user upload history
+      operationId: getHistory
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of upload records
+          content:
+            application/json:
+              example:
+                uploads:
+                  - id: "clx2upload1"
+                    fileName: "my-audio.wav"
+                    fileFormat: "wav"
+                    status: "completed"
+                    source: "studio"
+                    durationSec: null
+                    createdAt: "2026-05-14T10:00:00.000Z"
+                    updatedAt: "2026-05-14T10:00:00.000Z"
+                    metadata: {}
+                    activity:
+                      id: "clx2act1"
+                      title: "Audio uploaded"
+                      description: "Uploaded my-audio.wav"
+                      amountRupiah: 0
+                      createdAt: "2026-05-14T10:00:00.000Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /history/{id}/download:
+    get:
+      tags: [History]
+      summary: Download a previously uploaded file
+      operationId: downloadHistory
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Upload record ID
+      responses:
+        "200":
+          description: File download
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: File not found
+          content:
+            application/json:
+              examples:
+                notFound:
+                  value:
+                    error: "History item not found"
+                fileMissing:
+                  value:
+                    error: "File no longer exists"
+
+  /topup/create:
+    post:
+      tags: [TopUp]
+      summary: Create QRIS top-up payment
+      operationId: createTopUp
+      security:
+        - cookieAuth: []
+      description: |
+        Creates a top-up order via Bayar.gg QRIS payment.
+        Amount in Rupiah is credited directly to wallet balance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: integer
+                  minimum: 1000
+                  maximum: 500000
+                  description: "Top-up amount in Rupiah (integer)"
+                customer_name:
+                  type: string
+                customer_email:
+                  type: string
+                  format: email
+                customer_phone:
+                  type: string
+            example:
+              amount: 10000
+              customer_name: "Test User"
+              customer_email: "test@example.com"
+      responses:
+        "201":
+          description: Top-up order created
+          content:
+            application/json:
+              example:
+                ok: true
+                orderId: "clx3order1"
+                invoiceId: "INV-20260514-ABC123"
+                amount: 10000
+                paymentUrl: "https://www.bayar.gg/pay?invoice=INV-20260514-ABC123"
+                qrisImageUrl: "https://www.bayar.gg/qris-info/api/qr.php?text=...&size=300"
+                expiresAt: "2026-05-14T11:00:00.000Z"
+        "400":
+          description: Invalid amount
+          content:
+            application/json:
+              examples:
+                notInteger:
+                  value:
+                    error: "Amount must be an integer"
+                tooLow:
+                  value:
+                    error: "Amount must be at least 1000"
+                tooHigh:
+                  value:
+                    error: "Amount exceeds QRIS limit"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          description: Webhook URL not configured
+          content:
+            application/json:
+              example:
+                error: "Webhook URL not configured"
+        "502":
+          description: Payment gateway error
+          content:
+            application/json:
+              example:
+                error: "Payment gateway did not return invoice ID"
+
+  /topup/status/{reference}:
+    get:
+      tags: [TopUp]
+      summary: Check top-up order status
+      operationId: getTopUpStatus
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: reference
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "Order ID or external invoice ID"
+      responses:
+        "200":
+          description: Order status
+          content:
+            application/json:
+              examples:
+                pending:
+                  summary: Payment pending
+                  value:
+                    ok: true
+                    paid: false
+                    status: "PENDING"
+                    amount: 10000
+                    finalAmount: null
+                    createdAt: "2026-05-14T10:00:00.000Z"
+                    updatedAt: "2026-05-14T10:00:00.000Z"
+                completed:
+                  summary: Payment completed
+                  value:
+                    ok: true
+                    paid: true
+                    status: "COMPLETED"
+                    amount: 10000
+                    finalAmount: 10200
+                    createdAt: "2026-05-14T10:00:00.000Z"
+                    updatedAt: "2026-05-14T10:05:00.000Z"
+        "400":
+          description: Missing reference
+          content:
+            application/json:
+              example:
+                error: "Reference is required"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              example:
+                error: "Order not found"
+
+  /webhooks/bayar:
+    post:
+      tags: [TopUp]
+      summary: Bayar.gg payment webhook
+      operationId: bayarWebhook
+      security: []
+      description: |
+        Webhook callback from Bayar.gg. Verifies HMAC SHA256 signature.
+        On "paid" status: credits wallet, creates transaction records.
+        Signature data format: "{invoiceId}|{status}|{finalAmount}|{timestamp}"
+      parameters:
+        - name: x-webhook-signature
+          in: header
+          required: true
+          schema:
+            type: string
+          description: HMAC SHA256 signature
+        - name: x-webhook-timestamp
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Webhook timestamp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                invoice_id:
+                  type: string
+                status:
+                  type: string
+                  enum: [paid, pending, failed, expired]
+                amount:
+                  type: number
+                final_amount:
+                  type: number
+                unique_code:
+                  type: string
+                paid_at:
+                  type: string
+                paid_reff_num:
+                  type: string
+                customer_name:
+                  type: string
+                customer_email:
+                  type: string
+                customer_phone:
+                  type: string
+            example:
+              invoice_id: "INV-20260514-ABC123"
+              status: "paid"
+              amount: 10000
+              final_amount: 10000
+              unique_code: "123"
+              paid_at: "2026-05-14T10:05:00.000Z"
+              paid_reff_num: "REF123456"
+              customer_name: "Test User"
+              customer_email: "test@example.com"
+      responses:
+        "200":
+          description: Webhook processed
+          content:
+            application/json:
+              examples:
+                success:
+                  value:
+                    ok: true
+                ignored:
+                  summary: Non-paid status ignored
+                  value:
+                    ok: true
+                    ignored: true
+                alreadyProcessed:
+                  summary: Already processed
+                  value:
+                    ok: true
+                    alreadyProcessed: true
+        "401":
+          description: Invalid signature
+          content:
+            application/json:
+              example:
+                error: "Invalid webhook signature"
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              example:
+                error: "Order not found"
+
+  /products:
+    get:
+      tags: [Products]
+      summary: List all active products
+      operationId: getProducts
+      security: []
+      description: Public endpoint. Supports pagination, filtering, sorting, and search.
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+          description: Filter by category slug
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search in name, description, tags
+        - name: featured
+          in: query
+          schema:
+            type: string
+            enum: ["true"]
+          description: Filter featured products only
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [newest, price-asc, price-desc, name]
+            default: newest
+          description: Sort order
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Product list with pagination
+          content:
+            application/json:
+              example:
+                products:
+                  - id: "clx4prod1"
+                    name: "UI System Pro"
+                    slug: "ui-system-pro"
+                    shortDesc: "Professional UI framework for Roblox games"
+                    thumbnail: "/images/ui-system-pro.png"
+                    pricePersonal: 50000
+                    priceCommercial: 150000
+                    priceEnterprise: 500000
+                    featured: true
+                    version: "1.2.0"
+                    tags: ["ui", "framework", "professional"]
+                    category:
+                      id: "clx4cat1"
+                      name: "UI Systems"
+                      slug: "ui-systems"
+                    image: "/images/ui-system-pro.png"
+                    soldCount: 42
+                    createdAt: "2026-05-01T10:00:00.000Z"
+                pagination:
+                  page: 1
+                  limit: 20
+                  total: 5
+                  totalPages: 1
+
+  /products/categories:
+    get:
+      tags: [Products]
+      summary: List all product categories
+      operationId: getCategories
+      security: []
+      responses:
+        "200":
+          description: Category list
+          content:
+            application/json:
+              example:
+                categories:
+                  - id: "clx4cat1"
+                    name: "UI Systems"
+                    slug: "ui-systems"
+                    description: "Interface frameworks, menus, HUDs"
+                    icon: "layout"
+                    productCount: 3
+                  - id: "clx4cat2"
+                    name: "Utility Scripts"
+                    slug: "utility-scripts"
+                    description: "Helper functions and development tools"
+                    icon: "wrench"
+                    productCount: 5
+
+  /products/{idOrSlug}:
+    get:
+      tags: [Products]
+      summary: Get product detail
+      operationId: getProductDetail
+      security: []
+      parameters:
+        - name: idOrSlug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Product ID or slug
+      responses:
+        "200":
+          description: Product detail
+          content:
+            application/json:
+              example:
+                id: "clx4prod1"
+                name: "UI System Pro"
+                slug: "ui-system-pro"
+                description: "A comprehensive UI framework for Roblox game development. Includes menus, HUDs, notifications, and more."
+                shortDesc: "Professional UI framework for Roblox games"
+                thumbnail: "/images/ui-system-pro.png"
+                pricePersonal: 50000
+                priceCommercial: 150000
+                priceEnterprise: 500000
+                featured: true
+                version: "1.2.0"
+                tags: ["ui", "framework", "professional"]
+                category:
+                  id: "clx4cat1"
+                  name: "UI Systems"
+                  slug: "ui-systems"
+                images:
+                  - id: "clx4img1"
+                    url: "/images/ui-system-pro-1.png"
+                    sortOrder: 0
+                docs:
+                  - id: "clx4file1"
+                    fileName: "README.md"
+                    fileType: "documentation"
+                    version: "1.2.0"
+                soldCount: 42
+                createdAt: "2026-05-01T10:00:00.000Z"
+                updatedAt: "2026-05-10T15:00:00.000Z"
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              example:
+                error: "Product not found"
+
+  /cart:
+    get:
+      tags: [Cart]
+      summary: Get shopping cart
+      operationId: getCart
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Cart items with total
+          content:
+            application/json:
+              example:
+                items:
+                  - id: "clx5cart1"
+                    productId: "clx4prod1"
+                    product:
+                      id: "clx4prod1"
+                      name: "UI System Pro"
+                      slug: "ui-system-pro"
+                      thumbnail: "/images/ui-system-pro.png"
+                      pricePersonal: 50000
+                      priceCommercial: 150000
+                      priceEnterprise: 500000
+                      active: true
+                    licenseType: "PERSONAL"
+                    priceRupiah: 50000
+                    addedAt: "2026-05-14T10:00:00.000Z"
+                total: 50000
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Cart]
+      summary: Clear entire cart
+      operationId: clearCart
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Cart cleared
+          content:
+            application/json:
+              example:
+                ok: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /cart/add:
+    post:
+      tags: [Cart]
+      summary: Add item to cart
+      operationId: addToCart
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId]
+              properties:
+                productId:
+                  type: string
+                licenseType:
+                  type: string
+                  enum: [PERSONAL, COMMERCIAL, ENTERPRISE]
+                  default: PERSONAL
+            example:
+              productId: "clx4prod1"
+              licenseType: "PERSONAL"
+      responses:
+        "201":
+          description: Item added to cart
+          content:
+            application/json:
+              example:
+                ok: true
+                item:
+                  id: "clx5cart1"
+                  productId: "clx4prod1"
+                  licenseType: "PERSONAL"
+                  priceRupiah: 50000
+                  addedAt: "2026-05-14T10:00:00.000Z"
+                updated: false
+        "200":
+          description: Existing item updated
+          content:
+            application/json:
+              example:
+                ok: true
+                item:
+                  id: "clx5cart1"
+                  productId: "clx4prod1"
+                  licenseType: "COMMERCIAL"
+                  priceRupiah: 150000
+                  addedAt: "2026-05-14T10:00:00.000Z"
+                updated: true
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              examples:
+                missingProduct:
+                  value:
+                    error: "productId is required"
+                invalidType:
+                  value:
+                    error: "Invalid licenseType"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              example:
+                error: "Product not found"
+        "409":
+          description: Already owns license
+          content:
+            application/json:
+              example:
+                error: "You already own a license for this product"
+
+  /cart/{itemId}:
+    delete:
+      tags: [Cart]
+      summary: Remove item from cart
+      operationId: removeFromCart
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Cart item ID
+      responses:
+        "200":
+          description: Item removed
+          content:
+            application/json:
+              example:
+                ok: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Item not found
+          content:
+            application/json:
+              example:
+                error: "Item not found in cart"
+
+  /checkout:
+    post:
+      tags: [Checkout]
+      summary: Purchase all items in cart
+      operationId: checkout
+      security:
+        - cookieAuth: []
+      description: |
+        Deducts wallet balance, generates license keys for each item, clears cart.
+        License maxGames by type: PERSONAL=3, COMMERCIAL=10, ENTERPRISE=unlimited.
+      responses:
+        "201":
+          description: Purchase successful
+          content:
+            application/json:
+              example:
+                ok: true
+                purchases:
+                  - id: "clx6pur1"
+                    productId: "clx4prod1"
+                    licenseType: "PERSONAL"
+                    amountRupiah: 50000
+                licenses:
+                  - id: "clx6lic1"
+                    productId: "clx4prod1"
+                    licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+                    licenseType: "PERSONAL"
+                    maxGames: 3
+                totalCharged: 50000
+                newBalance: 0
+        "400":
+          description: Cart is empty or no valid items
+          content:
+            application/json:
+              examples:
+                emptyCart:
+                  value:
+                    error: "Cart is empty"
+                noValid:
+                  value:
+                    error: "No valid items in cart"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          description: Insufficient balance
+          content:
+            application/json:
+              example:
+                error: "Insufficient balance"
+                required: 50000
+                balance: 10000
+                shortfall: 40000
+        "404":
+          description: User not found
+          content:
+            application/json:
+              example:
+                error: "User not found"
+        "409":
+          description: Already owns all items
+          content:
+            application/json:
+              example:
+                error: "You already own licenses for all items in cart"
+
+  /licenses:
+    get:
+      tags: [Licenses]
+      summary: Get user licenses
+      operationId: getLicenses
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of user licenses
+          content:
+            application/json:
+              example:
+                licenses:
+                  - id: "clx6lic1"
+                    licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+                    licenseType: "PERSONAL"
+                    status: "ACTIVE"
+                    maxGames: 3
+                    expiresAt: null
+                    lastVerifiedAt: "2026-05-14T09:00:00.000Z"
+                    product:
+                      id: "clx4prod1"
+                      name: "UI System Pro"
+                      slug: "ui-system-pro"
+                      thumbnail: "/images/ui-system-pro.png"
+                      version: "1.2.0"
+                    games:
+                      - id: "clx6gw1"
+                        gameId: "123456789"
+                        gameName: "My Roblox Game"
+                        addedAt: "2026-05-14T10:00:00.000Z"
+                    verificationCount: 15
+                    createdAt: "2026-05-13T19:30:00.000Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /licenses/{id}:
+    get:
+      tags: [Licenses]
+      summary: Get license detail
+      operationId: getLicenseDetail
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: License ID
+      responses:
+        "200":
+          description: License detail with purchase info and verifications
+          content:
+            application/json:
+              example:
+                id: "clx6lic1"
+                licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+                licenseType: "PERSONAL"
+                status: "ACTIVE"
+                maxGames: 3
+                expiresAt: null
+                lastVerifiedAt: "2026-05-14T09:00:00.000Z"
+                product:
+                  id: "clx4prod1"
+                  name: "UI System Pro"
+                  slug: "ui-system-pro"
+                  thumbnail: "/images/ui-system-pro.png"
+                  version: "1.2.0"
+                  description: "A comprehensive UI framework for Roblox game development."
+                purchase:
+                  id: "clx6pur1"
+                  amountRupiah: 50000
+                  purchasedAt: "2026-05-13T19:30:00.000Z"
+                games:
+                  - id: "clx6gw1"
+                    gameId: "123456789"
+                    gameName: "My Roblox Game"
+                    active: true
+                    addedAt: "2026-05-14T10:00:00.000Z"
+                recentVerifications:
+                  - id: "clx6ver1"
+                    gameId: "123456789"
+                    success: true
+                    reason: "valid"
+                    verifiedAt: "2026-05-14T09:00:00.000Z"
+                createdAt: "2026-05-13T19:30:00.000Z"
+                updatedAt: "2026-05-14T09:00:00.000Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: License not found
+          content:
+            application/json:
+              example:
+                error: "License not found"
+
+  /licenses/{id}/whitelist:
+    post:
+      tags: [Licenses]
+      summary: Add game to license whitelist
+      operationId: addGameToWhitelist
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: License ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gameId]
+              properties:
+                gameId:
+                  type: string
+                  maxLength: 64
+                  description: Roblox placeId (numeric string)
+                gameName:
+                  type: string
+                  description: Human-readable game name
+            example:
+              gameId: "123456789"
+              gameName: "My Roblox Game"
+      responses:
+        "201":
+          description: Game added to whitelist
+          content:
+            application/json:
+              example:
+                ok: true
+                game:
+                  id: "clx6gw1"
+                  gameId: "123456789"
+                  gameName: "My Roblox Game"
+                  addedAt: "2026-05-14T10:00:00.000Z"
+        "200":
+          description: Game reactivated
+          content:
+            application/json:
+              example:
+                ok: true
+                game:
+                  id: "clx6gw1"
+                  gameId: "123456789"
+                  gameName: "My Roblox Game"
+                  addedAt: "2026-05-14T10:00:00.000Z"
+                reactivated: true
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              examples:
+                missingGameId:
+                  value:
+                    error: "gameId is required"
+                invalidFormat:
+                  value:
+                    error: "Invalid gameId format"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Max games reached
+          content:
+            application/json:
+              example:
+                error: "Maximum games reached for this license tier"
+                maxGames: 3
+                currentGames: 3
+        "404":
+          description: License not found or inactive
+          content:
+            application/json:
+              example:
+                error: "License not found or inactive"
+        "409":
+          description: Game already whitelisted
+          content:
+            application/json:
+              example:
+                error: "Game already whitelisted"
+
+  /licenses/{id}/whitelist/{gameWhitelistId}:
+    delete:
+      tags: [Licenses]
+      summary: Remove game from whitelist
+      operationId: removeGameFromWhitelist
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: License ID
+        - name: gameWhitelistId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Game whitelist entry ID
+      responses:
+        "200":
+          description: Game removed from whitelist
+          content:
+            application/json:
+              example:
+                ok: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              examples:
+                licenseNotFound:
+                  value:
+                    error: "License not found"
+                gameNotFound:
+                  value:
+                    error: "Game not found in whitelist"
+
+  /licenses/{id}/download:
+    get:
+      tags: [Licenses]
+      summary: Download script files for license
+      operationId: downloadLicenseFiles
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: License ID
+      responses:
+        "200":
+          description: Script file download
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              examples:
+                licenseNotFound:
+                  value:
+                    error: "License not found or inactive"
+                noFile:
+                  value:
+                    error: "No script file available for this product"
+                fileMissing:
+                  value:
+                    error: "File not found on server"
+
+  /api/verify-license:
+    post:
+      tags: [Verification]
+      summary: Verify license key from Roblox game
+      operationId: verifyLicense
+      security: []
+      description: |
+        Public endpoint called from Roblox game servers via HttpService.
+        Verifies license key validity for a specific game/place ID.
+        Logs all verification attempts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [licenseKey, gameId]
+              properties:
+                licenseKey:
+                  type: string
+                  description: "License key (format: RBXR-XXXX-XXXX-XXXX-XXXX)"
+                gameId:
+                  type: string
+                  description: Roblox place ID
+                gameName:
+                  type: string
+                  description: Game name (optional, updates stored name)
+            example:
+              licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+              gameId: "123456789"
+              gameName: "My Roblox Game"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              examples:
+                valid:
+                  summary: License is valid
+                  value:
+                    valid: true
+                    message: "License verified successfully"
+                    product:
+                      name: "UI System Pro"
+                      version: "1.2.0"
+                    license:
+                      type: "PERSONAL"
+                      expiresAt: null
+                invalidKey:
+                  summary: Invalid license key
+                  value:
+                    valid: false
+                    message: "Invalid license key"
+                suspended:
+                  summary: License suspended
+                  value:
+                    valid: false
+                    message: "License is suspended"
+                expired:
+                  summary: License expired
+                  value:
+                    valid: false
+                    message: "License has expired"
+                notWhitelisted:
+                  summary: Game not whitelisted
+                  value:
+                    valid: false
+                    message: "Game is not whitelisted for this license. Add it in your dashboard."
+                    licenseType: "PERSONAL"
+                productInactive:
+                  summary: Product no longer available
+                  value:
+                    valid: false
+                    message: "Product is no longer available"
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              example:
+                valid: false
+                message: "licenseKey and gameId are required"
+
+  /admin/products:
+    get:
+      tags: [Admin]
+      summary: List all products (including inactive)
+      operationId: adminListProducts
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: All products with counts
+          content:
+            application/json:
+              example:
+                products:
+                  - id: "clx4prod1"
+                    name: "UI System Pro"
+                    slug: "ui-system-pro"
+                    description: "A comprehensive UI framework"
+                    pricePersonal: 50000
+                    priceCommercial: 150000
+                    priceEnterprise: 500000
+                    featured: true
+                    active: true
+                    version: "1.2.0"
+                    category:
+                      id: "clx4cat1"
+                      name: "UI Systems"
+                      slug: "ui-systems"
+                    _count:
+                      licenses: 42
+                      purchases: 45
+                    createdAt: "2026-05-01T10:00:00.000Z"
+                    updatedAt: "2026-05-10T15:00:00.000Z"
+                pagination:
+                  page: 1
+                  limit: 50
+                  total: 5
+                  totalPages: 1
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Admin]
+      summary: Create a new product
+      operationId: adminCreateProduct
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug, description]
+              properties:
+                name:
+                  type: string
+                slug:
+                  type: string
+                  description: URL-friendly unique identifier
+                description:
+                  type: string
+                shortDesc:
+                  type: string
+                thumbnail:
+                  type: string
+                categoryId:
+                  type: string
+                pricePersonal:
+                  type: integer
+                  default: 0
+                priceCommercial:
+                  type: integer
+                  default: 0
+                priceEnterprise:
+                  type: integer
+                  default: 0
+                featured:
+                  type: boolean
+                  default: false
+                version:
+                  type: string
+                  default: "1.0.0"
+                tags:
+                  type: string
+                  description: Comma-separated tags
+            example:
+              name: "UI System Pro"
+              slug: "ui-system-pro"
+              description: "A comprehensive UI framework for Roblox game development."
+              shortDesc: "Professional UI framework"
+              categoryId: "clx4cat1"
+              pricePersonal: 50000
+              priceCommercial: 150000
+              priceEnterprise: 500000
+              featured: true
+              version: "1.0.0"
+              tags: "ui,framework,professional"
+      responses:
+        "201":
+          description: Product created
+          content:
+            application/json:
+              example:
+                ok: true
+                product:
+                  id: "clx4prod2"
+                  name: "UI System Pro"
+                  slug: "ui-system-pro"
+                  description: "A comprehensive UI framework for Roblox game development."
+                  pricePersonal: 50000
+                  priceCommercial: 150000
+                  priceEnterprise: 500000
+                  featured: true
+                  active: true
+                  version: "1.0.0"
+                  createdAt: "2026-05-14T10:00:00.000Z"
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              example:
+                error: "name, slug, and description are required"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Slug already exists
+          content:
+            application/json:
+              example:
+                error: "Product with this slug already exists"
+
+  /admin/products/{id}:
+    put:
+      tags: [Admin]
+      summary: Update a product
+      operationId: adminUpdateProduct
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Product ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                slug:
+                  type: string
+                description:
+                  type: string
+                shortDesc:
+                  type: string
+                thumbnail:
+                  type: string
+                categoryId:
+                  type: string
+                pricePersonal:
+                  type: integer
+                priceCommercial:
+                  type: integer
+                priceEnterprise:
+                  type: integer
+                featured:
+                  type: boolean
+                active:
+                  type: boolean
+                version:
+                  type: string
+                tags:
+                  type: string
+            example:
+              pricePersonal: 60000
+              featured: true
+              version: "1.3.0"
+      responses:
+        "200":
+          description: Product updated
+          content:
+            application/json:
+              example:
+                ok: true
+                product:
+                  id: "clx4prod1"
+                  name: "UI System Pro"
+                  slug: "ui-system-pro"
+                  pricePersonal: 60000
+                  version: "1.3.0"
+                  updatedAt: "2026-05-14T11:00:00.000Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              example:
+                error: "Product not found"
+        "409":
+          description: Slug conflict
+          content:
+            application/json:
+              example:
+                error: "Product with this slug already exists"
+    delete:
+      tags: [Admin]
+      summary: Deactivate a product (soft delete)
+      operationId: adminDeleteProduct
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Product ID
+      responses:
+        "200":
+          description: Product deactivated
+          content:
+            application/json:
+              example:
+                ok: true
+                message: "Product deactivated"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              example:
+                error: "Product not found"
+
+  /admin/products/{id}/files:
+    post:
+      tags: [Admin]
+      summary: Add file record to product
+      operationId: adminAddProductFile
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Product ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileName, fileType, filePath]
+              properties:
+                fileName:
+                  type: string
+                fileType:
+                  type: string
+                  enum: [script, documentation, asset]
+                filePath:
+                  type: string
+                  description: Server file path
+                fileSize:
+                  type: integer
+                version:
+                  type: string
+                  description: Defaults to product version
+            example:
+              fileName: "ui-system-pro.lua"
+              fileType: "script"
+              filePath: "/uploads/scripts/ui-system-pro-v1.2.0.lua"
+              fileSize: 45000
+              version: "1.2.0"
+      responses:
+        "201":
+          description: File record added
+          content:
+            application/json:
+              example:
+                ok: true
+                file:
+                  id: "clx7file1"
+                  fileName: "ui-system-pro.lua"
+                  fileType: "script"
+                  filePath: "/uploads/scripts/ui-system-pro-v1.2.0.lua"
+                  fileSize: 45000
+                  version: "1.2.0"
+                  createdAt: "2026-05-14T10:00:00.000Z"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              examples:
+                missingFields:
+                  value:
+                    error: "fileName, fileType, and filePath are required"
+                invalidType:
+                  value:
+                    error: "fileType must be: script, documentation, or asset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              example:
+                error: "Product not found"
+
+  /admin/products/{productId}/files/{fileId}:
+    delete:
+      tags: [Admin]
+      summary: Remove file record from product
+      operationId: adminDeleteProductFile
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: fileId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: File removed
+          content:
+            application/json:
+              example:
+                ok: true
+                message: "File removed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: File not found
+          content:
+            application/json:
+              example:
+                error: "File not found"
+
+  /admin/categories:
+    post:
+      tags: [Admin]
+      summary: Create product category
+      operationId: adminCreateCategory
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug]
+              properties:
+                name:
+                  type: string
+                slug:
+                  type: string
+                description:
+                  type: string
+                icon:
+                  type: string
+                sortOrder:
+                  type: integer
+                  default: 0
+            example:
+              name: "UI Systems"
+              slug: "ui-systems"
+              description: "Interface frameworks, menus, HUDs"
+              icon: "layout"
+              sortOrder: 1
+      responses:
+        "201":
+          description: Category created
+          content:
+            application/json:
+              example:
+                ok: true
+                category:
+                  id: "clx4cat1"
+                  name: "UI Systems"
+                  slug: "ui-systems"
+                  description: "Interface frameworks, menus, HUDs"
+                  icon: "layout"
+                  sortOrder: 1
+                  createdAt: "2026-05-14T10:00:00.000Z"
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              example:
+                error: "name and slug are required"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Slug already exists
+          content:
+            application/json:
+              example:
+                error: "Category with this slug already exists"
+
+  /admin/categories/{id}:
+    put:
+      tags: [Admin]
+      summary: Update category
+      operationId: adminUpdateCategory
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                slug:
+                  type: string
+                description:
+                  type: string
+                icon:
+                  type: string
+                sortOrder:
+                  type: integer
+                active:
+                  type: boolean
+            example:
+              description: "Updated description"
+              sortOrder: 2
+      responses:
+        "200":
+          description: Category updated
+          content:
+            application/json:
+              example:
+                ok: true
+                category:
+                  id: "clx4cat1"
+                  name: "UI Systems"
+                  slug: "ui-systems"
+                  description: "Updated description"
+                  sortOrder: 2
+                  updatedAt: "2026-05-14T11:00:00.000Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Category not found
+          content:
+            application/json:
+              example:
+                error: "Category not found"
+        "409":
+          description: Slug conflict
+          content:
+            application/json:
+              example:
+                error: "Category with this slug already exists"
+    delete:
+      tags: [Admin]
+      summary: Deactivate category (soft delete)
+      operationId: adminDeleteCategory
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Category deactivated
+          content:
+            application/json:
+              example:
+                ok: true
+                message: "Category deactivated"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Category not found
+          content:
+            application/json:
+              example:
+                error: "Category not found"
+
+  /admin/licenses:
+    get:
+      tags: [Admin]
+      summary: List all licenses
+      operationId: adminListLicenses
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, SUSPENDED, REVOKED, EXPIRED]
+        - name: userId
+          in: query
+          schema:
+            type: string
+        - name: productId
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: License list
+          content:
+            application/json:
+              example:
+                licenses:
+                  - id: "clx6lic1"
+                    licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+                    licenseType: "PERSONAL"
+                    status: "ACTIVE"
+                    maxGames: 3
+                    user:
+                      id: "clx1abc123"
+                      email: "dev@rbxroyale.com"
+                      displayName: "RBX Dev"
+                    product:
+                      id: "clx4prod1"
+                      name: "UI System Pro"
+                    _count:
+                      gameWhitelist: 2
+                      verifications: 15
+                    createdAt: "2026-05-13T19:30:00.000Z"
+                pagination:
+                  page: 1
+                  limit: 50
+                  total: 42
+                  totalPages: 1
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/licenses/{id}/status:
+    put:
+      tags: [Admin]
+      summary: Update license status
+      operationId: adminUpdateLicenseStatus
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: License ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [ACTIVE, SUSPENDED, REVOKED]
+                reason:
+                  type: string
+            example:
+              status: "SUSPENDED"
+              reason: "Violation of terms of service"
+      responses:
+        "200":
+          description: License status updated
+          content:
+            application/json:
+              example:
+                ok: true
+                license:
+                  id: "clx6lic1"
+                  licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+                  status: "SUSPENDED"
+                  updatedAt: "2026-05-14T11:00:00.000Z"
+        "400":
+          description: Invalid status
+          content:
+            application/json:
+              example:
+                error: "Valid status required: ACTIVE, SUSPENDED, REVOKED"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: License not found
+          content:
+            application/json:
+              example:
+                error: "License not found"
+
+  /admin/analytics:
+    get:
+      tags: [Admin]
+      summary: Sales analytics overview
+      operationId: adminAnalytics
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Analytics data
+          content:
+            application/json:
+              example:
+                overview:
+                  totalProducts: 5
+                  totalActiveLicenses: 42
+                  totalPurchases: 45
+                  totalRevenue: 2250000
+                recentPurchases:
+                  - id: "clx6pur1"
+                    user:
+                      id: "clx1abc123"
+                      email: "dev@rbxroyale.com"
+                      displayName: "RBX Dev"
+                    product:
+                      id: "clx4prod1"
+                      name: "UI System Pro"
+                    amountRupiah: 50000
+                    licenseType: "PERSONAL"
+                    purchasedAt: "2026-05-13T19:30:00.000Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: connect.sid
+      description: Session cookie set after OAuth login or dev-login
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Upload API key (required for /upload endpoint)
+
+  responses:
+    Unauthorized:
+      description: Not authenticated
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "Not authenticated"
+    Forbidden:
+      description: Admin access required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "Admin access required"
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+      example:
+        error: "Something went wrong"
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+        walletBalance:
+          type: integer
+          description: Current wallet balance in Rupiah
+        totalTopUp:
+          type: integer
+          description: Lifetime top-up total
+        totalSpent:
+          type: integer
+          description: Lifetime spent total
+        freeAudioUsedToday:
+          type: integer
+          description: Free audio quota used today
+        freeAudioDailyLimit:
+          type: integer
+          description: Daily free audio limit (default 3)
+        role:
+          type: string
+          enum: [USER, ADMIN]
+        createdAt:
+          type: string
+          format: date-time
+      example:
+        id: "clx1abc123"
+        email: "dev@rbxroyale.com"
+        displayName: "RBX Dev"
+        avatarUrl: "https://lh3.googleusercontent.com/photo.jpg"
+        walletBalance: 50000
+        totalTopUp: 100000
+        totalSpent: 50000
+        freeAudioUsedToday: 1
+        freeAudioDailyLimit: 3
+        role: "USER"
+        createdAt: "2026-05-01T10:00:00.000Z"
+
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        shortDesc:
+          type: string
+          nullable: true
+        thumbnail:
+          type: string
+          nullable: true
+        pricePersonal:
+          type: integer
+          description: Price in Rupiah for Personal license
+        priceCommercial:
+          type: integer
+          description: Price in Rupiah for Commercial license
+        priceEnterprise:
+          type: integer
+          description: Price in Rupiah for Enterprise license
+        featured:
+          type: boolean
+        active:
+          type: boolean
+        version:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        category:
+          $ref: "#/components/schemas/ProductCategory"
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductImage"
+        soldCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ProductCategory:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+          nullable: true
+        icon:
+          type: string
+          nullable: true
+        productCount:
+          type: integer
+
+    ProductImage:
+      type: object
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+        sortOrder:
+          type: integer
+
+    ProductFile:
+      type: object
+      properties:
+        id:
+          type: string
+        fileName:
+          type: string
+        fileType:
+          type: string
+          enum: [script, documentation, asset]
+        filePath:
+          type: string
+        fileSize:
+          type: integer
+        version:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    CartItem:
+      type: object
+      properties:
+        id:
+          type: string
+        productId:
+          type: string
+        product:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            slug:
+              type: string
+            thumbnail:
+              type: string
+              nullable: true
+            pricePersonal:
+              type: integer
+            priceCommercial:
+              type: integer
+            priceEnterprise:
+              type: integer
+            active:
+              type: boolean
+        licenseType:
+          type: string
+          enum: [PERSONAL, COMMERCIAL, ENTERPRISE]
+        priceRupiah:
+          type: integer
+        addedAt:
+          type: string
+          format: date-time
+
+    License:
+      type: object
+      properties:
+        id:
+          type: string
+        licenseKey:
+          type: string
+          description: "Format: RBXR-XXXX-XXXX-XXXX-XXXX"
+        licenseType:
+          type: string
+          enum: [PERSONAL, COMMERCIAL, ENTERPRISE]
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED, REVOKED, EXPIRED]
+        maxGames:
+          type: integer
+          nullable: true
+          description: "Max whitelisted games (null = unlimited)"
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: "null = lifetime license"
+        lastVerifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+        product:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            slug:
+              type: string
+            thumbnail:
+              type: string
+              nullable: true
+            version:
+              type: string
+        games:
+          type: array
+          items:
+            $ref: "#/components/schemas/GameWhitelist"
+        verificationCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    GameWhitelist:
+      type: object
+      properties:
+        id:
+          type: string
+        gameId:
+          type: string
+          description: Roblox placeId
+        gameName:
+          type: string
+          nullable: true
+        active:
+          type: boolean
+        addedAt:
+          type: string
+          format: date-time
+
+    Purchase:
+      type: object
+      properties:
+        id:
+          type: string
+        productId:
+          type: string
+        licenseType:
+          type: string
+          enum: [PERSONAL, COMMERCIAL, ENTERPRISE]
+        amountRupiah:
+          type: integer
+        purchasedAt:
+          type: string
+          format: date-time
+
+    TopUpOrder:
+      type: object
+      properties:
+        orderId:
+          type: string
+        invoiceId:
+          type: string
+        amount:
+          type: integer
+          description: Amount in Rupiah
+        finalAmount:
+          type: integer
+          nullable: true
+          description: Amount actually paid (with unique code)
+        paymentUrl:
+          type: string
+          description: Bayar.gg payment URL
+        qrisImageUrl:
+          type: string
+          description: QR code image URL for QRIS payment
+        expiresAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [PENDING, COMPLETED, FAILED, CANCELED]
+
+    UploadRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        fileName:
+          type: string
+        fileFormat:
+          type: string
+          enum: [wav, mp3, ogg]
+        status:
+          type: string
+        source:
+          type: string
+        durationSec:
+          type: number
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+      example:
+        page: 1
+        limit: 20
+        total: 100
+        totalPages: 5
+
+    LicenseVerificationResult:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        message:
+          type: string
+        product:
+          type: object
+          nullable: true
+          properties:
+            name:
+              type: string
+            version:
+              type: string
+        license:
+          type: object
+          nullable: true
+          properties:
+            type:
+              type: string
+            expiresAt:
+              type: string
+              format: date-time
+              nullable: true
+
+    AdminAnalytics:
+      type: object
+      properties:
+        overview:
+          type: object
+          properties:
+            totalProducts:
+              type: integer
+            totalActiveLicenses:
+              type: integer
+            totalPurchases:
+              type: integer
+            totalRevenue:
+              type: integer
+              description: Total revenue in Rupiah
+        recentPurchases:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              user:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  email:
+                    type: string
+                  displayName:
+                    type: string
+              product:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+              amountRupiah:
+                type: integer
+              licenseType:
+                type: string
+              purchasedAt:
+                type: string
+                format: date-time
