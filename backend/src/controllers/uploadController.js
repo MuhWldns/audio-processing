@@ -3,7 +3,6 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import { prisma } from "../prisma.js";
 import { ensureDailyAudioQuota, getAudioUsagePrice } from "../services/authService.js";
 import { saveUploadRecord, formatUploadResponse } from "../services/uploadService.js";
@@ -23,14 +22,17 @@ export const handleUpload = async (req, res) => {
   }
 
   const price = getAudioUsagePrice(quotaUser, 1);
-  const wallet = await prisma.wallet.findUnique({ where: { userId } });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { walletBalance: true },
+  });
 
-  if (price.paidUnits > 0 && (!wallet || wallet.balanceTokens < price.tokenCost)) {
+  if (price.paidUnits > 0 && (!user || user.walletBalance < price.cost)) {
     fs.unlink(req.file.path, () => undefined);
     return res.status(402).json({
-      error: "Not enough tokens",
-      requiredTokens: price.tokenCost,
-      balanceTokens: wallet?.balanceTokens ?? 0,
+      error: "Insufficient balance",
+      required: price.cost,
+      balance: user?.walletBalance ?? 0,
       freeRemaining: price.freeRemaining,
     });
   }

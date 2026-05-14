@@ -1,6 +1,6 @@
-import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma.js";
 import { createBayarPayment, verifyBayarWebhookSignature } from "../services/bayarService.js";
+import { creditWallet } from "../services/databaseService.js";
 
 const MIN_TOPUP_AMOUNT = 1000;
 const MAX_QRIS_AMOUNT = 500000;
@@ -20,12 +20,13 @@ const toNumber = (value) => {
 const buildTopUpMetadata = (paymentData, existing = {}) => {
   return {
     ...existing,
-    invoiceId: paymentData?.payment?.invoice_id,
-    paymentMethod: paymentData?.payment?.payment_method,
-    expiresAt: paymentData?.payment?.expires_at,
-    paymentUrl: paymentData?.payment_url,
-    uniqueCode: paymentData?.payment?.unique_code,
-    finalAmount: paymentData?.payment?.final_amount,
+    invoiceId: paymentData?.data?.invoice_id,
+    paymentMethod: paymentData?.data?.payment_method,
+    expiresAt: paymentData?.data?.expires_at,
+    paymentUrl: paymentData?.data?.payment_url,
+    uniqueCode: paymentData?.data?.unique_code,
+    finalAmount: paymentData?.data?.final_amount,
+    qrisImageUrl: paymentData?.data?.qris_static_image_url,
   };
 };
 
@@ -53,14 +54,9 @@ export const handleCreateTopUp = async (req, res) => {
   const customerEmail = req.body?.customer_email;
   const customerPhone = req.body?.customer_phone;
 
-  const wallet = await prisma.wallet.findUnique({ where: { userId: req.user.id } });
-  if (!wallet) {
-    return res.status(404).json({ error: "Wallet not found" });
-  }
-
   const paymentData = await createBayarPayment({
     amount,
-    description: `Top up ${amount}`,
+    description: `Top up Rp ${amount.toLocaleString("id-ID")}`,
     customerName,
     customerEmail,
     customerPhone,
@@ -68,23 +64,20 @@ export const handleCreateTopUp = async (req, res) => {
     paymentMethod: PAYMENT_METHOD,
   });
 
-  const invoiceId = paymentData?.payment?.invoice_id;
+  const invoiceId = paymentData?.data?.invoice_id;
   if (!invoiceId) {
     return res.status(502).json({ error: "Payment gateway did not return invoice ID" });
   }
 
-  const tokensBought = amount;
   const metadata = buildTopUpMetadata(paymentData);
 
   const order = await prisma.topUpOrder.create({
     data: {
       userId: req.user.id,
-      walletId: wallet.id,
       provider: PROVIDER_NAME,
       externalId: invoiceId,
-      currency: "IDR",
-      amountPaid: new Prisma.Decimal(amount),
-      tokensBought,
+      amountRupiah: amount,
+      finalAmount: paymentData?.data?.final_amount ? Number(paymentData.data.final_amount) : null,
       status: "PENDING",
       metadata,
     },
@@ -95,8 +88,8 @@ export const handleCreateTopUp = async (req, res) => {
     orderId: order.id,
     invoiceId,
     amount,
-    tokensBought,
     paymentUrl: metadata.paymentUrl,
+    qrisImageUrl: metadata.qrisImageUrl,
     expiresAt: metadata.expiresAt,
   });
 };
@@ -124,103 +117,110 @@ export const handleBayarWebhook = async (req, res) => {
     return res.status(200).json({ ok: true, ignored: true });
   }
 
-  const order = await prisma.topUpOrder.findUnique({ where: { externalId: invoiceId } });
-  if (!order) {
-    return res.status(404).json({ error: "Order not found" });
-  }
+  try {
+    const order = await prisma.topUpOrder.findUnique({ where: { externalId: invoiceId } });
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
 
-  if (order.status === "COMPLETED") {
-    return res.status(200).json({ ok: true, alreadyProcessed: true });
-  }
+    if (order.status === "COMPLETED") {
+      return res.status(200).json({ ok: true, alreadyProcessed: true });
+    }
 
-  const tokensBought = order.tokensBought;
-  const paymentMeta = {
-    invoiceId,
-    status,
-    amount: req.body?.amount,
-    finalAmount: req.body?.final_amount,
-    uniqueCode: req.body?.unique_code,
-    paidAt: req.body?.paid_at,
-    paidReffNum: req.body?.paid_reff_num,
-    customerName: req.body?.customer_name,
-    customerEmail: req.body?.customer_email,
-    customerPhone: req.body?.customer_phone,
-  };
+    const amount = order.amountRupiah;
+    const paymentMeta = {
+      invoiceId,
+      status,
+      amount: req.body?.amount,
+      finalAmount: req.body?.final_amount,
+      uniqueCode: req.body?.unique_code,
+      paidAt: req.body?.paid_at,
+      paidReffNum: req.body?.paid_reff_num,
+      customerName: req.body?.customer_name,
+      customerEmail: req.body?.customer_email,
+      customerPhone: req.body?.customer_phone,
+    };
 
-  const updatedMetadata = buildTopUpMetadata(
-    {
-      payment: {
-        invoice_id: invoiceId,
-        payment_method: PAYMENT_METHOD,
-        expires_at: order.metadata?.expiresAt,
-        unique_code: req.body?.unique_code,
-        final_amount: req.body?.final_amount,
-      },
-      payment_url: order.metadata?.paymentUrl,
-    },
-    order.metadata || {},
-  );
+    // Credit wallet using unified ledger
+    await creditWallet(order.userId, amount, {
+      type: "TOP_UP",
+      referenceType: "TOP_UP_ORDER",
+      referenceId: order.id,
+      description: `Top up Rp ${amount.toLocaleString("id-ID")} via ${PROVIDER_NAME}`,
+      metadata: paymentMeta,
+    });
 
-  await prisma.$transaction(async (tx) => {
-    const activity = await tx.activityLog.create({
+    // Create activity log
+    await prisma.activityLog.create({
       data: {
         userId: order.userId,
         type: "TOP_UP",
         status: "SUCCESS",
         title: "Top up successful",
-        description: `Top up Rp ${tokensBought.toLocaleString("id-ID")}`,
-        amountTokens: tokensBought,
+        description: `Top up Rp ${amount.toLocaleString("id-ID")}`,
+        amountRupiah: amount,
         metadata: paymentMeta,
       },
     });
 
-    await tx.topUpTransaction.create({
-      data: {
-        userId: order.userId,
-        amountRupiah: tokensBought,
-        paymentGateway: PROVIDER_NAME,
-        paymentId: invoiceId,
-        status: "completed",
-        metadata: paymentMeta,
-      },
-    });
-
-    await tx.wallet.update({
-      where: { id: order.walletId },
-      data: {
-        balanceTokens: { increment: tokensBought },
-        lifetimeTopUp: { increment: tokensBought },
-      },
-    });
-
-    await tx.tokenTransaction.create({
-      data: {
-        userId: order.userId,
-        walletId: order.walletId,
-        type: "TOP_UP",
-        amountTokens: tokensBought,
-        referenceType: "TOP_UP_ORDER",
-        referenceId: order.id,
-        memo: `Top up ${tokensBought}`,
-        metadata: paymentMeta,
-      },
-    });
-
-    await tx.topUpOrder.update({
+    // Mark order as completed
+    await prisma.topUpOrder.update({
       where: { id: order.id },
       data: {
         status: "COMPLETED",
-        activityLogId: activity.id,
+        finalAmount: req.body?.final_amount ? Number(req.body.final_amount) : null,
         metadata: {
-          ...updatedMetadata,
+          ...(order.metadata || {}),
           paidAt: req.body?.paid_at,
           paidReffNum: req.body?.paid_reff_num,
-          finalAmount: req.body?.final_amount,
-          status,
+          webhookPayload: paymentMeta,
         },
       },
     });
+
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error("[webhook] Error processing payment:", err);
+    return res.status(500).json({ error: "Failed to process payment", detail: err.message });
+  }
+};
+
+export const handleGetTopUpStatus = async (req, res) => {
+  const { reference } = req.params;
+
+  if (!reference) {
+    return res.status(400).json({ error: "Reference is required" });
+  }
+
+  const order = await prisma.topUpOrder.findFirst({
+    where: {
+      userId: req.user.id,
+      OR: [
+        { id: reference },
+        { externalId: reference },
+      ],
+    },
+    select: {
+      id: true,
+      status: true,
+      amountRupiah: true,
+      finalAmount: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
 
-  return res.status(200).json({ ok: true });
+  if (!order) {
+    return res.status(404).json({ error: "Order not found" });
+  }
+
+  return res.status(200).json({
+    ok: true,
+    paid: order.status === "COMPLETED",
+    status: order.status,
+    amount: order.amountRupiah,
+    finalAmount: order.finalAmount,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  });
 };

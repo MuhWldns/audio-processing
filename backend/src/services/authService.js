@@ -10,29 +10,11 @@ import { prisma } from "../prisma.js";
 const googleScopes = ["email", "profile"];
 const discordScopes = ["identify", "email"];
 const DEFAULT_DAILY_FREE_AUDIO_LIMIT = 3;
-const DEFAULT_PAID_AUDIO_TOKEN_COST = 1;
+const DEFAULT_PAID_AUDIO_COST = 2000;
 
 // Helper functions
 const toIsoStringOrNull = (value) => (value ? new Date(value).toISOString() : null);
 export const getDateKey = (date = new Date()) => date.toISOString().slice(0, 10);
-
-/**
- * Cek apakah wallet untuk user sudah ada, jika belum buat
- * @param {string} userId - ID user
- * @returns {Promise<Object>} Wallet object
- */
-export const ensureWallet = async (userId) => {
-  const wallet = await prisma.wallet.findUnique({ where: { userId } });
-  if (wallet) {
-    return wallet;
-  }
-
-  return await prisma.wallet.create({
-    data: {
-      userId,
-    },
-  });
-};
 
 /**
  * Mapping Google profile ke format internal
@@ -112,8 +94,6 @@ export const upsertOAuthUser = async ({ provider, providerAccountId, email, disp
       },
     });
 
-    await ensureWallet(user.id);
-
     return user;
   }
 
@@ -136,9 +116,6 @@ export const upsertOAuthUser = async ({ provider, providerAccountId, email, disp
           idToken,
         },
       },
-      wallet: {
-        create: {},
-      },
     },
   });
 
@@ -158,9 +135,6 @@ export function configurePassport() {
     try {
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        include: {
-          wallet: true,
-        },
       });
 
       done(null, user ?? false);
@@ -288,7 +262,6 @@ export async function createAuthActivity(userId, type, title, description) {
 export async function handleOAuthLogin({ userId, provider, providerLabel }) {
   await attachLoginMetadata(userId, provider);
   await createAuthActivity(userId, "LOGIN", "Signed in", `Signed in with ${providerLabel}`);
-  await ensureWallet(userId);
 }
 
 /**
@@ -304,7 +277,7 @@ export async function ensureDailyAudioQuota(userId) {
       freeAudioDateKey: true,
       freeAudioUsedToday: true,
       freeAudioDailyLimit: true,
-      paidAudioTokenCost: true,
+      paidAudioCost: true,
     },
   });
 
@@ -323,14 +296,14 @@ export async function ensureDailyAudioQuota(userId) {
       freeAudioDateKey: todayKey,
       freeAudioUsedToday: 0,
       freeAudioDailyLimit: user.freeAudioDailyLimit ?? DEFAULT_DAILY_FREE_AUDIO_LIMIT,
-      paidAudioTokenCost: user.paidAudioTokenCost ?? DEFAULT_PAID_AUDIO_TOKEN_COST,
+      paidAudioCost: user.paidAudioCost ?? DEFAULT_PAID_AUDIO_COST,
     },
     select: {
       id: true,
       freeAudioDateKey: true,
       freeAudioUsedToday: true,
       freeAudioDailyLimit: true,
-      paidAudioTokenCost: true,
+      paidAudioCost: true,
     },
   });
 }
@@ -343,7 +316,7 @@ export async function ensureDailyAudioQuota(userId) {
  */
 export function getAudioUsagePrice(user, requestedAudioCount = 1) {
   const dailyLimit = user.freeAudioDailyLimit ?? DEFAULT_DAILY_FREE_AUDIO_LIMIT;
-  const paidCost = user.paidAudioTokenCost ?? DEFAULT_PAID_AUDIO_TOKEN_COST;
+  const paidCost = user.paidAudioCost ?? DEFAULT_PAID_AUDIO_COST;
   const freeUsed = user.freeAudioUsedToday ?? 0;
   const freeRemaining = Math.max(0, dailyLimit - freeUsed);
   const freeCovered = Math.min(requestedAudioCount, freeRemaining);
@@ -352,7 +325,7 @@ export function getAudioUsagePrice(user, requestedAudioCount = 1) {
   return {
     freeCovered,
     paidUnits,
-    tokenCost: paidUnits * paidCost,
+    cost: paidUnits * paidCost,
     freeRemaining,
     dailyLimit,
   };
@@ -383,7 +356,7 @@ export async function recordAudioUsage(userId, usedCount = 1) {
       freeAudioDateKey: true,
       freeAudioUsedToday: true,
       freeAudioDailyLimit: true,
-      paidAudioTokenCost: true,
+      paidAudioCost: true,
     },
   });
 }
@@ -413,7 +386,6 @@ export async function buildMePayload(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: {
-      wallet: true,
       accounts: true,
     },
   });
@@ -431,19 +403,15 @@ export async function buildMePayload(userId) {
     avatarUrl: user.avatarUrl,
     lastLoginAt: toIsoStringOrNull(user.lastLoginAt),
     lastLoginProvider: user.lastLoginProvider,
-    wallet: user.wallet
-      ? {
-          balanceTokens: user.wallet.balanceTokens,
-          reservedTokens: user.wallet.reservedTokens,
-          lifetimeTopUp: user.wallet.lifetimeTopUp,
-          lifetimeSpent: user.wallet.lifetimeSpent,
-        }
-      : null,
+    role: user.role,
+    walletBalance: user.walletBalance,
+    totalTopUp: user.totalTopUp,
+    totalSpent: user.totalSpent,
     freeAudio: {
       dateKey: user.freeAudioDateKey ?? getDateKey(),
       usedToday: user.freeAudioUsedToday ?? 0,
       dailyLimit: user.freeAudioDailyLimit ?? DEFAULT_DAILY_FREE_AUDIO_LIMIT,
-      paidAudioTokenCost: user.paidAudioTokenCost ?? DEFAULT_PAID_AUDIO_TOKEN_COST,
+      paidAudioCost: user.paidAudioCost ?? DEFAULT_PAID_AUDIO_COST,
     },
     providers: user.accounts.map((account) => account.provider),
   };
