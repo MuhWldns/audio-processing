@@ -13,6 +13,7 @@ const navLinks = [
   { href: "/audio/history", label: "History" },
   { href: "/topup", label: "Top Up" },
   { href: "/profile", label: "Profile" },
+  { href: "/admin", label: "Admin", adminOnly: true },
 ];
 
 export default function Header() {
@@ -60,7 +61,9 @@ export default function Header() {
 
           {/* Desktop navigation */}
           <nav className="hidden items-center gap-2 md:flex">
-            {navLinks.map((link) => (
+            {navLinks
+              .filter((link) => !('adminOnly' in link && link.adminOnly) || user?.role === 'ADMIN')
+              .map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
@@ -119,7 +122,9 @@ export default function Header() {
         <div className="border-b border-white/[0.08] bg-black/40 backdrop-blur-xl md:hidden">
           <div className="mx-auto max-w-7xl px-6 py-4">
             <nav className="space-y-2">
-              {navLinks.map((link) => (
+              {navLinks
+                .filter((link) => !('adminOnly' in link && link.adminOnly) || user?.role === 'ADMIN')
+                .map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}

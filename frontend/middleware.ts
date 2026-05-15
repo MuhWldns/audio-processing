@@ -5,7 +5,7 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Protected routes that require authentication
-  const protectedRoutes = ["/audio/studio", "/audio/history", "/profile", "/topup"];
+  const protectedRoutes = ["/audio/studio", "/audio/history", "/profile", "/topup", "/admin"];
 
   // Check if the current path is protected
   const isProtected = protectedRoutes.some((route) => pathname.startsWith(route));
@@ -26,5 +26,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/audio/:path*", "/profile", "/topup"],
+  matcher: ["/audio/:path*", "/profile", "/topup", "/admin/:path*"],
 };
