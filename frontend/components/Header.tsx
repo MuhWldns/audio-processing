@@ -12,7 +12,7 @@ const navLinks = [
   { href: "/audio/studio", label: "Editor" },
   { href: "/audio/history", label: "History" },
   { href: "/topup", label: "Top Up" },
-  { href: "/profile", label: "Profile" },
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/admin", label: "Admin", adminOnly: true },
 ];
 

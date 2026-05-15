@@ -1,6 +1,6 @@
 ﻿# Frontend Pages Plan — RBX Royale Platform
 
-**Last Updated:** 2026-05-14  
+**Last Updated:** 2026-05-15  
 **Tech Stack:** Next.js 14+ App Router, TypeScript, Tailwind CSS  
 **Backend:** Express (localhost:3001)  
 **Auth:** Session-based (cookie `connect.sid`) via Google/Discord OAuth  
@@ -996,11 +996,12 @@ interface LicenseDetailState {
 
 ---
 
-### 🔨 `/admin` — Admin Dashboard
+### ✅ `/admin` — Admin Dashboard
 
 **Priority:** P3  
 **File:** `app/admin/page.tsx`  
-**Auth:** Admin only (role = ADMIN)
+**Auth:** Admin only (role = ADMIN)  
+**Status:** Done (2026-05-15)
 
 **Deskripsi:**  
 Overview analytics untuk admin. Total products, licenses, revenue, recent purchases.
@@ -1067,11 +1068,12 @@ interface AdminDashboardState {
 
 ---
 
-### 🔨 `/admin/products` — Product Management
+### ✅ `/admin/products` — Product Management
 
 **Priority:** P3  
 **File:** `app/admin/products/page.tsx`  
-**Auth:** Admin only
+**Auth:** Admin only  
+**Status:** Done (2026-05-15)
 
 **Deskripsi:**  
 CRUD interface untuk manage products. List semua produk (termasuk inactive), create, edit, delete (soft).
@@ -1129,11 +1131,12 @@ interface AdminProductsState {
 
 ---
 
-### 🔨 `/admin/products/new` — Create Product
+### ✅ `/admin/products/new` — Create Product
 
 **Priority:** P3  
 **File:** `app/admin/products/new/page.tsx`  
-**Auth:** Admin only
+**Auth:** Admin only  
+**Status:** Done (2026-05-15)
 
 **Deskripsi:**  
 Form untuk membuat produk baru.
@@ -1195,11 +1198,12 @@ interface ProductFormState {
 
 ---
 
-### 🔨 `/admin/products/[id]/edit` — Edit Product
+### ✅ `/admin/products/[id]/edit` — Edit Product
 
 **Priority:** P3  
 **File:** `app/admin/products/[id]/edit/page.tsx`  
-**Auth:** Admin only
+**Auth:** Admin only  
+**Status:** Done (2026-05-15)
 
 **Deskripsi:**  
 Form edit produk (sama seperti create, tapi pre-filled). Juga bisa manage files di sini.
@@ -1221,11 +1225,12 @@ Form edit produk (sama seperti create, tapi pre-filled). Juga bisa manage files 
 
 ---
 
-### 🔨 `/admin/categories` — Category Management
+### ✅ `/admin/categories` — Category Management
 
 **Priority:** P3  
 **File:** `app/admin/categories/page.tsx`  
-**Auth:** Admin only
+**Auth:** Admin only  
+**Status:** Done (2026-05-15)
 
 **Deskripsi:**  
 CRUD untuk product categories. Simple table + inline create/edit.
@@ -1267,11 +1272,12 @@ interface AdminCategoriesState {
 
 ---
 
-### 🔨 `/admin/licenses` — License Management
+### ✅ `/admin/licenses` — License Management
 
 **Priority:** P3  
 **File:** `app/admin/licenses/page.tsx`  
-**Auth:** Admin only
+**Auth:** Admin only  
+**Status:** Done (2026-05-15)
 
 **Deskripsi:**  
 Manage semua licenses. Filter by status, user, product. Bisa suspend/revoke licenses.
@@ -1319,24 +1325,23 @@ interface AdminLicensesState {
 
 ## Shared Components yang Perlu Dibuat
 
-| Komponen | Lokasi | Dipakai Di |
-|----------|--------|------------|
-| `Toast` | `components/ui/Toast.tsx` | Semua page (success/error notifications) |
-| `Modal` | `components/ui/Modal.tsx` | Cart, Admin pages |
-| `LoadingSkeleton` | `components/ui/Skeleton.tsx` | Semua page saat loading |
-| `EmptyState` | `components/ui/EmptyState.tsx` | History, Licenses, Cart |
-| `Pagination` | `components/ui/Pagination.tsx` | Products, Admin tables |
-| `StatusBadge` | `components/ui/StatusBadge.tsx` | Licenses, Transactions |
-| `CopyButton` | `components/ui/CopyButton.tsx` | License keys |
-| `PriceDisplay` | `components/ui/PriceDisplay.tsx` | Products, Cart, Checkout |
-| `ConfirmDialog` | `components/ui/ConfirmDialog.tsx` | Delete/remove actions |
-| `Breadcrumb` | `components/ui/Breadcrumb.tsx` | Store, Admin |
-| `ProductCard` | `components/store/ProductCard.tsx` | Store home, Product listing |
-| `LicenseCard` | `components/dashboard/LicenseCard.tsx` | Licenses list |
-| `TransactionItem` | `components/dashboard/TransactionItem.tsx` | Transaction history |
-| `DashboardLayout` | `components/layout/DashboardLayout.tsx` | All /dashboard/* pages |
-| `AdminLayout` | `components/layout/AdminLayout.tsx` | All /admin/* pages |
-| `AdminSidebar` | `components/layout/AdminSidebar.tsx` | Admin navigation |
+| Komponen | Lokasi | Dipakai Di | Status |
+|----------|--------|------------|--------|
+| `Toast` | `components/ui/Toast.tsx` | Semua page (success/error notifications) | 🔨 |
+| `Modal` | `components/ui/Modal.tsx` | Cart, Admin pages | 🔨 |
+| `LoadingSkeleton` | `components/ui/LoadingSkeleton.tsx` | Semua page saat loading | ✅ |
+| `EmptyState` | `components/ui/EmptyState.tsx` | History, Licenses, Cart | 🔨 |
+| `Pagination` | `components/ui/Pagination.tsx` | Products, Admin tables | ✅ |
+| `StatusBadge` | `components/ui/StatusBadge.tsx` | Licenses, Transactions | ✅ |
+| `CopyButton` | `components/ui/CopyButton.tsx` | License keys | 🔨 |
+| `PriceDisplay` | `components/ui/PriceDisplay.tsx` | Products, Cart, Checkout | 🔨 |
+| `ConfirmDialog` | `components/ui/ConfirmDialog.tsx` | Delete/remove actions | ✅ |
+| `Breadcrumb` | `components/ui/Breadcrumb.tsx` | Store, Admin | 🔨 |
+| `ProductCard` | `components/store/ProductCard.tsx` | Store home, Product listing | 🔨 |
+| `LicenseCard` | `components/dashboard/LicenseCard.tsx` | Licenses list | 🔨 |
+| `TransactionItem` | `components/dashboard/TransactionItem.tsx` | Transaction history | 🔨 |
+| `DashboardLayout` | `components/layout/DashboardLayout.tsx` | All /dashboard/* pages | 🔨 |
+| `AdminNav` | `components/admin/AdminNav.tsx` | Admin sub-navigation pills | ✅ |
 
 ---
 
@@ -1365,12 +1370,12 @@ interface AdminLicensesState {
 14. 🔨 `/dashboard/licenses/[id]`
 15. Shared: LicenseCard, TransactionItem
 
-### Sprint 5 — Admin Panel (Week 9-10)
-16. 🔨 `/admin` (dashboard)
-17. 🔨 `/admin/products` + `/admin/products/new` + `/admin/products/[id]/edit`
-18. 🔨 `/admin/categories`
-19. 🔨 `/admin/licenses`
-20. Shared: AdminLayout, AdminSidebar
+### Sprint 5 — Admin Panel (Week 9-10) ✅ DONE
+16. ✅ `/admin` (dashboard)
+17. ✅ `/admin/products` + `/admin/products/new` + `/admin/products/[id]/edit`
+18. ✅ `/admin/categories`
+19. ✅ `/admin/licenses`
+20. ✅ Shared: AdminNav, StatusBadge, ConfirmDialog, Pagination, LoadingSkeleton
 
 ---
 
@@ -1428,5 +1433,6 @@ const formatRupiah = (amount: number) => {
 ---
 
 *Document Created: 2026-05-14*  
-*Total Pages: 6 existing + 15 new = 21 pages*  
-*Estimated Timeline: 10 weeks (5 sprints)*
+*Last Updated: 2026-05-15*  
+*Total Pages: 12 existing (6 original + 6 admin) + 9 remaining = 21 pages*  
+*Estimated Remaining: 8 weeks (4 sprints)*
