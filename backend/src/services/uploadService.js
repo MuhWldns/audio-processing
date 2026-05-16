@@ -1,11 +1,13 @@
 /**
  * Service untuk business logic file upload
+ * Aligned with current schema: User.walletBalance + WalletTransaction ledger
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import multer from "multer";
 import { prisma } from "../prisma.js";
+import { debitWallet } from "./databaseService.js";
 
 /**
  * Konfigurasi multer untuk file upload
@@ -31,16 +33,7 @@ export const configureMulter = (uploadDir) => {
 
 /**
  * Simpan upload record ke database
- * @param {Object} params - Upload parameters
- * @param {string} params.userId - ID user
- * @param {Object} params.file - File object dari multer
- * @param {Object} params.priceData - Price calculation data
- * @param {number} params.priceData.tokenCost - Token cost
- * @param {number} params.priceData.freeCovered - Free units covered
- * @param {number} params.priceData.paidUnits - Paid units
- * @param {number} params.nextFreeUsedToday - Free audio count setelah update
- * @param {Object} params.quotaUser - User dengan quota data
- * @returns {Promise<Object>} Upload record dan activity
+ * Uses unified Rupiah wallet (User.walletBalance) and WalletTransaction ledger
  */
 export const saveUploadRecord = async ({ userId, file, priceData, nextFreeUsedToday, quotaUser }) => {
   const storedFileName = file.filename;
@@ -48,36 +41,59 @@ export const saveUploadRecord = async ({ userId, file, priceData, nextFreeUsedTo
   const fileFormat = path.extname(file.originalname).toLowerCase().replace(".", "");
 
   return await prisma.$transaction(async (tx) => {
-    if (priceData.paidUnits > 0) {
-      const wallet = await tx.wallet.findUnique({ where: { userId } });
-      
-      if (wallet) {
-        const updatedWallet = await tx.wallet.update({
-          where: { userId },
-          data: {
-            balanceTokens: {
-              decrement: priceData.tokenCost,
-            },
-            lifetimeSpent: {
-              increment: priceData.tokenCost,
-            },
-          },
-        });
+    // Debit wallet if paid units > 0
+    if (priceData.paidUnits > 0 && priceData.cost > 0) {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { walletBalance: true },
+      });
 
-        await tx.tokenTransaction.create({
-          data: {
-            userId,
-            walletId: updatedWallet.id,
-            type: "SETTLE",
-            amountTokens: -priceData.tokenCost,
-            referenceType: "UPLOAD_RECORD",
-            referenceId: storedFileName,
-            memo: `Audio upload: ${fileName}`,
-          },
-        });
+      if (!user || user.walletBalance < priceData.cost) {
+        throw new Error("Insufficient balance");
       }
+
+      // Deduct from wallet
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          walletBalance: { decrement: priceData.cost },
+          totalSpent: { increment: priceData.cost },
+        },
+      });
+
+      // Record in unified ledger
+      const updatedUser = await tx.user.findUnique({
+        where: { id: userId },
+        select: { walletBalance: true },
+      });
+
+      await tx.walletTransaction.create({
+        data: {
+          userId,
+          type: "AUDIO_CHARGE",
+          amount: -priceData.cost,
+          balanceAfter: updatedUser.walletBalance,
+          referenceType: "UPLOAD_RECORD",
+          referenceId: storedFileName,
+          description: `Audio upload: ${fileName}`,
+          metadata: {
+            freeCovered: priceData.freeCovered,
+            paidUnits: priceData.paidUnits,
+            costRupiah: priceData.cost,
+          },
+        },
+      });
     }
 
+    // Update free audio usage counter
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        freeAudioUsedToday: nextFreeUsedToday,
+      },
+    });
+
+    // Create activity log
     const activity = await tx.activityLog.create({
       data: {
         userId,
@@ -85,19 +101,20 @@ export const saveUploadRecord = async ({ userId, file, priceData, nextFreeUsedTo
         status: "SUCCESS",
         title: "Audio uploaded",
         description: `Saved ${fileName}`,
-        amountTokens: priceData.tokenCost,
+        amountRupiah: priceData.cost,
         fileName,
         fileFormat,
         metadata: {
           storedFileName,
           downloadName: fileName,
-          tokenCost: priceData.tokenCost,
+          costRupiah: priceData.cost,
           freeCovered: priceData.freeCovered,
           paidUnits: priceData.paidUnits,
         },
       },
     });
 
+    // Create upload record
     const uploadRecord = await tx.uploadRecord.create({
       data: {
         userId,
@@ -112,7 +129,7 @@ export const saveUploadRecord = async ({ userId, file, priceData, nextFreeUsedTo
           originalFileName: file.originalname,
           mimeType: file.mimetype,
           size: file.size,
-          tokenCost: priceData.tokenCost,
+          costRupiah: priceData.cost,
           freeCovered: priceData.freeCovered,
           paidUnits: priceData.paidUnits,
           freeAudioUsedToday: nextFreeUsedToday,
@@ -127,9 +144,6 @@ export const saveUploadRecord = async ({ userId, file, priceData, nextFreeUsedTo
 
 /**
  * Format upload response untuk client
- * @param {Object} uploadRecord - Upload record dari database
- * @param {Object} activity - Activity log
- * @returns {Object} Formatted response
  */
 export const formatUploadResponse = (uploadRecord, activity) => ({
   ok: true,
@@ -138,7 +152,7 @@ export const formatUploadResponse = (uploadRecord, activity) => ({
     fileName: uploadRecord.fileName,
     fileFormat: uploadRecord.fileFormat,
     createdAt: uploadRecord.createdAt,
-    tokenCost: uploadRecord.metadata?.tokenCost ?? 0,
+    costRupiah: uploadRecord.metadata?.costRupiah ?? 0,
     freeCovered: uploadRecord.metadata?.freeCovered ?? 0,
     paidUnits: uploadRecord.metadata?.paidUnits ?? 0,
   },
@@ -146,8 +160,6 @@ export const formatUploadResponse = (uploadRecord, activity) => ({
 
 /**
  * Format history response untuk client
- * @param {Array} uploads - Upload records dari database
- * @returns {Array} Formatted history items
  */
 export const formatHistoryResponse = (uploads) => {
   return uploads.map((item) => ({
@@ -165,7 +177,7 @@ export const formatHistoryResponse = (uploads) => {
           id: item.activityLog.id,
           title: item.activityLog.title,
           description: item.activityLog.description,
-          amountTokens: item.activityLog.amountTokens,
+          amountRupiah: item.activityLog.amountRupiah,
           createdAt: item.activityLog.createdAt,
         }
       : null,

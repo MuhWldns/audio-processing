@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
@@ -48,14 +49,16 @@ export default function Header() {
             </button>
 
             <Link href="/" className="flex items-center gap-3">
-              <img
+              <Image
                 className="h-11 w-11 rounded-2xl border border-white/10 bg-white/5 object-contain p-1.5 shadow-[0_0_18px_rgba(184,110,255,0.32)]"
                 src="/hero.png"
-                alt="RBX Royale Community logo"
+                alt="RBX Royale logo"
+                width={44}
+                height={44}
               />
               <div className="leading-tight">
-                <p className="text-[11px] uppercase tracking-[0.35em] text-violet-200/80">RBX Royale Community</p>
-                <p className="text-sm text-slate-300">Audio editing and uploads</p>
+                <p className="text-[11px] uppercase tracking-[0.35em] text-violet-200/80">RBX Royale</p>
+                <p className="text-sm text-slate-300">Scripts & Audio Tools</p>
               </div>
             </Link>
           </div>
@@ -83,10 +86,12 @@ export default function Header() {
             {!isLoading && user ? (
               <>
                 <div className="hidden items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-2 md:flex">
-                  <img
+                  <Image
                     className="h-8 w-8 rounded-full object-cover"
                     src={user.avatarUrl || fallbackAvatar}
                     alt={user.displayName || user.email || "User"}
+                    width={32}
+                    height={32}
                     onError={(event) => {
                       if (event.currentTarget.src !== fallbackAvatar) {
                         event.currentTarget.src = fallbackAvatar;
@@ -142,10 +147,12 @@ export default function Header() {
               {user && (
                 <div className="border-t border-white/10 pt-4">
                   <div className="flex items-center gap-3 px-4 py-3">
-                    <img
+                    <Image
                       className="h-10 w-10 rounded-full object-cover"
                       src={user.avatarUrl || fallbackAvatar}
                       alt={user.displayName || user.email || "User"}
+                      width={40}
+                      height={40}
                       onError={(event) => {
                         if (event.currentTarget.src !== fallbackAvatar) {
                           event.currentTarget.src = fallbackAvatar;

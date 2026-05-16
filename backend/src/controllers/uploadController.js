@@ -1,5 +1,6 @@
 /**
  * Controller untuk file upload
+ * Aligned with current schema: User.walletBalance + Rupiah pricing
  */
 
 import fs from "node:fs";
@@ -9,8 +10,6 @@ import { saveUploadRecord, formatUploadResponse } from "../services/uploadServic
 
 /**
  * Handler untuk upload file audio
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
  */
 export const handleUpload = async (req, res) => {
   const userId = req.user.id;
@@ -22,28 +21,43 @@ export const handleUpload = async (req, res) => {
   }
 
   const price = getAudioUsagePrice(quotaUser, 1);
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { walletBalance: true },
-  });
 
-  if (price.paidUnits > 0 && (!user || user.walletBalance < price.cost)) {
-    fs.unlink(req.file.path, () => undefined);
-    return res.status(402).json({
-      error: "Insufficient balance",
-      required: price.cost,
-      balance: user?.walletBalance ?? 0,
-      freeRemaining: price.freeRemaining,
+  // Check balance if paid units required
+  if (price.paidUnits > 0 && price.cost > 0) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { walletBalance: true },
     });
+
+    if (!user || user.walletBalance < price.cost) {
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(402).json({
+        error: "Insufficient balance",
+        required: price.cost,
+        balance: user?.walletBalance ?? 0,
+        freeRemaining: price.freeRemaining,
+      });
+    }
   }
 
-  const result = await saveUploadRecord({
-    userId,
-    file: req.file,
-    priceData: price,
-    nextFreeUsedToday: quotaUser.freeAudioUsedToday + price.freeCovered,
-    quotaUser,
-  });
+  try {
+    const result = await saveUploadRecord({
+      userId,
+      file: req.file,
+      priceData: price,
+      nextFreeUsedToday: quotaUser.freeAudioUsedToday + price.freeCovered,
+      quotaUser,
+    });
 
-  return res.status(201).json(formatUploadResponse(result.uploadRecord, result.activity));
+    return res.status(201).json(formatUploadResponse(result.uploadRecord, result.activity));
+  } catch (err) {
+    fs.unlink(req.file.path, () => undefined);
+
+    if (err.message === "Insufficient balance") {
+      return res.status(402).json({ error: "Insufficient balance" });
+    }
+
+    console.error("[upload] Error:", err);
+    return res.status(500).json({ error: "Upload failed" });
+  }
 };

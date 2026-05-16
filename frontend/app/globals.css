@@ -136,3 +136,15 @@ input[type="range"]::-moz-range-track {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-subtle);
 }
+
+/* Toast animation */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}

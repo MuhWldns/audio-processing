@@ -50,3 +50,41 @@ export async function fetchLicenseDetail(id: string) {
 
   return res.json();
 }
+
+export async function addGameToWhitelist(licenseId: string, gameId: string, gameName?: string) {
+  const res = await fetch(`${apiBaseUrl}/licenses/${encodeURIComponent(licenseId)}/whitelist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ gameId, gameName }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || 'Failed to add game');
+  }
+
+  return res.json();
+}
+
+export async function removeGameFromWhitelist(licenseId: string, gameWhitelistId: string) {
+  const res = await fetch(`${apiBaseUrl}/licenses/${encodeURIComponent(licenseId)}/whitelist/${encodeURIComponent(gameWhitelistId)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || 'Failed to remove game');
+  }
+
+  return res.json();
+}
+
+/**
+ * Download license script file
+ * Backend returns 302 redirect to presigned B2 URL — browser follows automatically
+ */
+export function downloadLicenseFile(licenseId: string) {
+  window.location.href = `${apiBaseUrl}/licenses/${encodeURIComponent(licenseId)}/download`;
+}

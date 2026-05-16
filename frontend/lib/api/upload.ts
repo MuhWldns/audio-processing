@@ -5,7 +5,7 @@ type UploadResult = {
     fileName: string;
     fileFormat: string;
     createdAt: string;
-    tokenCost: number;
+    costRupiah: number;
     freeCovered: number;
     paidUnits: number;
   };
@@ -13,8 +13,8 @@ type UploadResult = {
 
 type UploadError = {
   error: string;
-  requiredTokens?: number;
-  balanceTokens?: number;
+  required?: number;
+  balance?: number;
   freeRemaining?: number;
 };
 
@@ -49,11 +49,11 @@ export async function uploadProcessedAudio(file: Blob, fileName: string): Promis
             break;
 
           case 402:
-            if (errorData.error === "Not enough tokens") {
+            if (errorData.error === "Insufficient balance") {
               console.warn(
-                `Upload failed: Insufficient tokens. ` +
-                `Required: ${errorData.requiredTokens}, ` +
-                `Balance: ${errorData.balanceTokens}, ` +
+                `Upload failed: Insufficient balance. ` +
+                `Required: Rp ${errorData.required}, ` +
+                `Balance: Rp ${errorData.balance}, ` +
                 `Free remaining: ${errorData.freeRemaining}`
               );
             }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { Suspense, useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { fetchProducts, fetchProductCategories, type ProductSummary, type ProductCategory, type Pagination as PaginationType } from '@/lib/api/products';
@@ -18,6 +18,14 @@ const sortOptions = [
 ];
 
 export default function StoreProductsPage() {
+  return (
+    <Suspense fallback={<LoadingSkeleton variant="card" rows={6} />}>
+      <StoreProductsContent />
+    </Suspense>
+  );
+}
+
+function StoreProductsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 

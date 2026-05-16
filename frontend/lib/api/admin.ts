@@ -187,25 +187,21 @@ export async function deactivateProduct(id: string) {
 
 // ─── Product Files ───────────────────────────────────────────────────────────
 
-export type AddFilePayload = {
-  fileName: string;
-  fileType: 'script' | 'documentation' | 'asset';
-  filePath: string;
-  fileSize?: number;
-  version?: string;
-};
+export async function addProductFile(productId: string, file: File, fileType: 'script' | 'documentation' | 'asset', version?: string) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('fileType', fileType);
+  if (version) formData.append('version', version);
 
-export async function addProductFile(productId: string, payload: AddFilePayload) {
   const res = await fetch(`${apiBaseUrl}/admin/products/${productId}/files`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify(payload),
+    body: formData,
   });
 
   if (!res.ok) {
     const data = await res.json().catch(() => null);
-    throw new Error(data?.error || 'Failed to add file');
+    throw new Error(data?.error || 'Failed to upload file');
   }
 
   return res.json();

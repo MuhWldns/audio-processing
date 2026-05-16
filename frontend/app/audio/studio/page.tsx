@@ -52,10 +52,11 @@ export default function StudioPage() {
       uploadProcessedAudio(audioBlob, downloadName)
         .then(uploadResult => {
           if (uploadResult) {
+            const cost = uploadResult.upload.costRupiah;
             setExportMessage(
-              `Export complete! Uploaded to your account. ` +
-              `Used ${uploadResult.upload.freeCovered} free upload(s) ` +
-              `and ${uploadResult.upload.paidUnits} paid upload(s) (${uploadResult.upload.tokenCost} token(s)).`
+              cost > 0
+                ? `Export complete! Uploaded to your account. Charged Rp ${cost.toLocaleString("id-ID")}.`
+                : `Export complete! Uploaded to your account (free quota used).`
             );
           }
         })

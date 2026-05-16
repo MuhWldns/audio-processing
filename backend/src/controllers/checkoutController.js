@@ -5,6 +5,7 @@
 
 import crypto from "node:crypto";
 import { prisma } from "../prisma.js";
+import { sendPurchaseSuccessEmail } from "../services/emailService.js";
 import { debitWallet } from "../services/databaseService.js";
 
 /**
@@ -82,7 +83,7 @@ export const handleCheckout = async (req, res) => {
 
   const purchaseTotal = purchasableItems.reduce((sum, item) => sum + item.priceRupiah, 0);
 
-  // Check user balance
+  // Pre-check balance (fast fail before entering transaction)
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { walletBalance: true },
@@ -101,17 +102,28 @@ export const handleCheckout = async (req, res) => {
     });
   }
 
-  // Execute purchase in transaction
-  const result = await prisma.$transaction(async (tx) => {
-    // 1. Deduct balance
-    const updatedUser = await tx.user.update({
-      where: { id: userId },
-      data: {
-        walletBalance: { decrement: purchaseTotal },
-        totalSpent: { increment: purchaseTotal },
-      },
-      select: { walletBalance: true },
-    });
+  // Execute purchase in transaction (with atomic balance check)
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      // 1. Atomic balance check + deduct (prevents race condition)
+      const currentUser = await tx.user.findUnique({
+        where: { id: userId },
+        select: { walletBalance: true },
+      });
+
+      if (!currentUser || currentUser.walletBalance < purchaseTotal) {
+        throw new Error("INSUFFICIENT_BALANCE");
+      }
+
+      const updatedUser = await tx.user.update({
+        where: { id: userId },
+        data: {
+          walletBalance: { decrement: purchaseTotal },
+          totalSpent: { increment: purchaseTotal },
+        },
+        select: { walletBalance: true },
+      });
 
     // 2. Create purchases and licenses for each item
     const purchases = [];
@@ -130,12 +142,17 @@ export const handleCheckout = async (req, res) => {
       });
       purchases.push(purchase);
 
-      // Generate unique license key
+      // Generate unique license key (max 10 attempts)
       let licenseKey = generateLicenseKey();
       let keyExists = await tx.license.findUnique({ where: { licenseKey } });
-      while (keyExists) {
+      let attempts = 0;
+      while (keyExists && attempts < 10) {
         licenseKey = generateLicenseKey();
         keyExists = await tx.license.findUnique({ where: { licenseKey } });
+        attempts++;
+      }
+      if (keyExists) {
+        throw new Error("Failed to generate unique license key");
       }
 
       // Create license
@@ -197,6 +214,29 @@ export const handleCheckout = async (req, res) => {
       newBalance: updatedUser.walletBalance,
     };
   });
+  } catch (err) {
+    if (err.message === "INSUFFICIENT_BALANCE") {
+      return res.status(402).json({
+        error: "Insufficient balance",
+        required: purchaseTotal,
+        balance: user.walletBalance,
+      });
+    }
+    throw err;
+  }
+
+  // Send email notification (fire-and-forget)
+  const emailUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true, displayName: true },
+  });
+  if (emailUser) {
+    const purchaseDetails = result.purchases.map((p, i) => ({
+      ...p,
+      productName: purchasableItems[i]?.product?.name || "Script",
+    }));
+    sendPurchaseSuccessEmail(emailUser, purchaseDetails, result.licenses, purchaseTotal, result.newBalance).catch(() => {});
+  }
 
   return res.status(201).json({
     ok: true,

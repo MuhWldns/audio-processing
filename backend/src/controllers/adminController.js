@@ -2,9 +2,9 @@
  * Admin controller - Product CRUD, Category CRUD, License management
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "../prisma.js";
+import { uploadFile, generateFileKey, deleteFile } from "../services/storageService.js";
 
 // ==================== PRODUCT CRUD ====================
 
@@ -105,13 +105,15 @@ export const handleAdminDeleteProduct = async (req, res) => {
  */
 export const handleAdminListProducts = async (req, res) => {
   const { page = 1, limit = 50 } = req.query;
-  const skip = (Number(page) - 1) * Number(limit);
+  const safePage = Math.max(Number(page) || 1, 1);
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
+  const skip = (safePage - 1) * safeLimit;
 
   const [products, total] = await Promise.all([
     prisma.product.findMany({
       orderBy: { createdAt: "desc" },
       skip,
-      take: Number(limit),
+      take: safeLimit,
       include: {
         category: { select: { id: true, name: true, slug: true } },
         _count: { select: { licenses: true, purchases: true } },
@@ -122,7 +124,7 @@ export const handleAdminListProducts = async (req, res) => {
 
   return res.status(200).json({
     products,
-    pagination: { page: Number(page), limit: Number(limit), total, totalPages: Math.ceil(total / Number(limit)) },
+    pagination: { page: safePage, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
   });
 };
 
@@ -211,7 +213,9 @@ export const handleAdminDeleteCategory = async (req, res) => {
  */
 export const handleAdminListLicenses = async (req, res) => {
   const { status, userId, productId, page = 1, limit = 50 } = req.query;
-  const skip = (Number(page) - 1) * Number(limit);
+  const safePage = Math.max(Number(page) || 1, 1);
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
+  const skip = (safePage - 1) * safeLimit;
 
   const where = {};
   if (status) where.status = status;
@@ -223,7 +227,7 @@ export const handleAdminListLicenses = async (req, res) => {
       where,
       orderBy: { createdAt: "desc" },
       skip,
-      take: Number(limit),
+      take: safeLimit,
       include: {
         user: { select: { id: true, email: true, displayName: true } },
         product: { select: { id: true, name: true, slug: true } },
@@ -235,7 +239,7 @@ export const handleAdminListLicenses = async (req, res) => {
 
   return res.status(200).json({
     licenses,
-    pagination: { page: Number(page), limit: Number(limit), total, totalPages: Math.ceil(total / Number(limit)) },
+    pagination: { page: safePage, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
   });
 };
 
@@ -331,18 +335,32 @@ export const handleAdminAnalytics = async (req, res) => {
 // ==================== PRODUCT FILES ====================
 
 /**
- * POST /admin/products/:id/files - Add file record to product
+ * POST /admin/products/:id/files - Upload file to B2 and add record
  */
+const ALLOWED_FILE_EXTENSIONS = ['.lua', '.rbxm', '.rbxmx', '.md', '.txt'];
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
 export const handleAdminAddProductFile = async (req, res) => {
   const { id } = req.params;
-  const { fileName, fileType, filePath: filePathInput, fileSize, version } = req.body;
 
-  if (!fileName || !fileType || !filePathInput) {
-    return res.status(400).json({ error: "fileName, fileType, and filePath are required" });
+  if (!req.file) {
+    return res.status(400).json({ error: "File is required" });
   }
 
-  if (!["script", "documentation", "asset"].includes(fileType)) {
+  const fileType = req.body?.fileType;
+  if (!fileType || !["script", "documentation", "asset"].includes(fileType)) {
     return res.status(400).json({ error: "fileType must be: script, documentation, or asset" });
+  }
+
+  // Validate file extension
+  const ext = path.extname(req.file.originalname).toLowerCase();
+  if (!ALLOWED_FILE_EXTENSIONS.includes(ext)) {
+    return res.status(400).json({ error: `File type not allowed. Accepted: ${ALLOWED_FILE_EXTENSIONS.join(', ')}` });
+  }
+
+  // Validate file size
+  if (req.file.size > MAX_FILE_SIZE) {
+    return res.status(400).json({ error: "File too large. Maximum 10MB." });
   }
 
   const product = await prisma.product.findUnique({ where: { id } });
@@ -350,14 +368,27 @@ export const handleAdminAddProductFile = async (req, res) => {
     return res.status(404).json({ error: "Product not found" });
   }
 
+  const version = req.body?.version || product.version;
+  const fileName = req.file.originalname;
+  const key = generateFileKey(product.slug, version, fileName);
+
+  // Upload to B2
+  try {
+    await uploadFile(key, req.file.buffer, req.file.mimetype);
+  } catch (err) {
+    console.error("[admin] B2 upload failed:", err.message);
+    return res.status(502).json({ error: "Failed to upload file to storage" });
+  }
+
+  // Save record in DB
   const file = await prisma.productFile.create({
     data: {
       productId: id,
       fileName,
       fileType,
-      filePath: filePathInput,
-      fileSize: fileSize || null,
-      version: version || product.version,
+      filePath: key,
+      fileSize: req.file.size,
+      version,
     },
   });
 
@@ -365,7 +396,7 @@ export const handleAdminAddProductFile = async (req, res) => {
 };
 
 /**
- * DELETE /admin/products/:productId/files/:fileId - Remove file from product
+ * DELETE /admin/products/:productId/files/:fileId - Remove file from B2 and DB
  */
 export const handleAdminDeleteProductFile = async (req, res) => {
   const { productId, fileId } = req.params;
@@ -376,6 +407,13 @@ export const handleAdminDeleteProductFile = async (req, res) => {
 
   if (!file) {
     return res.status(404).json({ error: "File not found" });
+  }
+
+  // Delete from B2 (best-effort)
+  try {
+    await deleteFile(file.filePath);
+  } catch (err) {
+    console.warn("[admin] B2 delete failed (continuing):", err.message);
   }
 
   await prisma.productFile.delete({ where: { id: fileId } });

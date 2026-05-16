@@ -11,7 +11,6 @@ import {
   removeProductFile,
   type Category,
   type ProductFile,
-  type AddFilePayload,
 } from '@/lib/api/admin';
 import AdminNav from '@/components/admin/AdminNav';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
@@ -47,10 +46,8 @@ export default function AdminProductEditPage() {
   // Files
   const [files, setFiles] = useState<ProductFile[]>([]);
   const [addingFile, setAddingFile] = useState(false);
-  const [newFileName, setNewFileName] = useState('');
+  const [newFile, setNewFile] = useState<File | null>(null);
   const [newFileType, setNewFileType] = useState<'script' | 'documentation' | 'asset'>('script');
-  const [newFilePath, setNewFilePath] = useState('');
-  const [newFileSize, setNewFileSize] = useState('');
   const [newFileVersion, setNewFileVersion] = useState('');
   const [fileError, setFileError] = useState<string | null>(null);
 
@@ -162,26 +159,20 @@ export default function AdminProductEditPage() {
 
   const handleAddFile = async () => {
     setFileError(null);
-    if (!newFileName || !newFilePath) {
-      setFileError('fileName dan filePath wajib diisi.');
+    if (!newFile) {
+      setFileError('Pilih file untuk diupload.');
       return;
     }
 
     setAddingFile(true);
     try {
-      const payload: AddFilePayload = {
-        fileName: newFileName,
-        fileType: newFileType,
-        filePath: newFilePath,
-        fileSize: newFileSize ? Number(newFileSize) : undefined,
-        version: newFileVersion || undefined,
-      };
-      const result = await addProductFile(productId, payload);
+      const result = await addProductFile(productId, newFile, newFileType, newFileVersion || undefined);
       setFiles((prev) => [...prev, result.file]);
-      setNewFileName('');
-      setNewFilePath('');
-      setNewFileSize('');
+      setNewFile(null);
       setNewFileVersion('');
+      // Reset file input
+      const fileInput = document.getElementById('admin-file-input') as HTMLInputElement;
+      if (fileInput) fileInput.value = '';
     } catch (err) {
       setFileError(err instanceof Error ? err.message : 'Gagal menambah file');
     } finally {
@@ -445,11 +436,11 @@ export default function AdminProductEditPage() {
             <h3 className="text-sm font-semibold text-slate-200">Tambah File</h3>
             <div className="grid gap-3 sm:grid-cols-2">
               <input
-                type="text"
-                value={newFileName}
-                onChange={(e) => setNewFileName(e.target.value)}
-                placeholder="File name (e.g. script.lua)"
-                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-violet-400/50"
+                id="admin-file-input"
+                type="file"
+                accept=".lua,.rbxm,.rbxmx,.md,.txt"
+                onChange={(e) => setNewFile(e.target.files?.[0] || null)}
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-violet-400/50 file:mr-3 file:rounded-full file:border-0 file:bg-violet-500/20 file:px-3 file:py-1 file:text-xs file:font-medium file:text-violet-200"
               />
               <select
                 value={newFileType}
@@ -462,13 +453,6 @@ export default function AdminProductEditPage() {
               </select>
               <input
                 type="text"
-                value={newFilePath}
-                onChange={(e) => setNewFilePath(e.target.value)}
-                placeholder="File path (e.g. /uploads/scripts/file.lua)"
-                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-violet-400/50"
-              />
-              <input
-                type="text"
                 value={newFileVersion}
                 onChange={(e) => setNewFileVersion(e.target.value)}
                 placeholder="Version (optional)"
@@ -476,15 +460,19 @@ export default function AdminProductEditPage() {
               />
             </div>
 
+            {newFile && (
+              <p className="text-xs text-slate-400">Selected: {newFile.name} ({(newFile.size / 1024).toFixed(1)} KB)</p>
+            )}
+
             {fileError && <p className="text-xs text-rose-300">{fileError}</p>}
 
             <button
               type="button"
               onClick={handleAddFile}
-              disabled={addingFile}
+              disabled={addingFile || !newFile}
               className="rounded-full border border-white/10 bg-white/5 px-5 py-2.5 text-sm font-semibold text-slate-100 transition hover:border-violet-300/30 hover:bg-violet-500/10 disabled:opacity-50"
             >
-              {addingFile ? 'Menambahkan...' : '+ Tambah File'}
+              {addingFile ? 'Uploading...' : '+ Upload File'}
             </button>
           </div>
         </div>

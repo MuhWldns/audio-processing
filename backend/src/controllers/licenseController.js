@@ -3,12 +3,11 @@
  * - List user's licenses
  * - Get license detail
  * - Whitelist/remove game IDs
- * - Download script files
+ * - Download script files (via B2 presigned URL)
  */
 
 import { prisma } from "../prisma.js";
-import path from "node:path";
-import fs from "node:fs";
+import { getPresignedDownloadUrl } from "../services/storageService.js";
 
 /**
  * GET /licenses - Get user's licenses
@@ -198,7 +197,7 @@ export const handleRemoveGameFromWhitelist = async (req, res) => {
 };
 
 /**
- * GET /licenses/:id/download - Download script files for a license
+ * GET /licenses/:id/download - Download script files via presigned URL
  */
 export const handleDownloadLicenseFiles = async (req, res) => {
   const userId = req.user.id;
@@ -228,14 +227,11 @@ export const handleDownloadLicenseFiles = async (req, res) => {
     return res.status(404).json({ error: "No script file available for this product" });
   }
 
-  const filePath = path.resolve(scriptFile.filePath);
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: "File not found on server" });
+  try {
+    const url = await getPresignedDownloadUrl(scriptFile.filePath);
+    return res.redirect(302, url);
+  } catch (err) {
+    console.error("[license] Presigned URL generation failed:", err.message);
+    return res.status(500).json({ error: "Failed to generate download link" });
   }
-
-  res.setHeader("Content-Disposition", `attachment; filename="${scriptFile.fileName}"`);
-  res.setHeader("Content-Type", "application/octet-stream");
-
-  const stream = fs.createReadStream(filePath);
-  stream.pipe(res);
 };

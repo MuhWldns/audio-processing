@@ -42,6 +42,7 @@ vi.mock("../src/prisma.js", () => {
       session: createMockModel(),
       wallet: createMockModel(),
       tokenTransaction: createMockModel(),
+      walletTransaction: createMockModel(),
       usageEvent: createMockModel(),
       activityLog: createMockModel(),
       uploadRecord: createMockModel(),

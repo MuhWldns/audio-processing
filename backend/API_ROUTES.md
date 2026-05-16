@@ -1,4 +1,6 @@
-# Backend API Routes Documentation
+# Backend API Routes (Source of Truth)
+
+> Generated from `server.js` + controllers — 2026-05-15
 
 ## Base URL
 
@@ -6,28 +8,26 @@
 http://localhost:3001
 ```
 
----
-
 ## Authentication
 
-All protected routes require an active session cookie (`connect.sid`). Session is established via OAuth login flow.
+Session-based via `connect.sid` cookie. Established through OAuth login flow (Google/Discord).
 
 ---
 
 ## Auth Routes
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/auth/google` | No | Initiate Google OAuth login |
-| GET | `/auth/google/callback` | No | Google OAuth callback |
-| GET | `/auth/discord` | No | Initiate Discord OAuth login |
-| GET | `/auth/discord/callback` | No | Discord OAuth callback |
-| POST | `/auth/logout` | Yes | Logout current session |
-| GET | `/auth/me` | No | Get current user data (returns null if not logged in) |
+| Method | Path | Access | Description |
+|--------|------|--------|-------------|
+| GET | `/auth/google` | Public | Initiate Google OAuth |
+| GET | `/auth/google/callback` | Public | Google OAuth callback |
+| GET | `/auth/discord` | Public | Initiate Discord OAuth |
+| GET | `/auth/discord/callback` | Public | Discord OAuth callback |
+| POST | `/auth/logout` | Protected | Logout session |
+| GET | `/auth/me` | Public | Get current user (returns `{ user: null }` if unauthenticated) |
+| POST | `/auth/dev-login` | Dev only | Create session without OAuth (non-production) |
 
-### GET /auth/me
+### GET /auth/me — Response
 
-**Response (authenticated):**
 ```json
 {
   "user": {
@@ -37,41 +37,41 @@ All protected routes require an active session cookie (`connect.sid`). Session i
     "fullName": "John Doe",
     "displayName": "John",
     "avatarUrl": "https://...",
-    "lastLoginAt": "2026-05-14T00:00:00.000Z",
+    "lastLoginAt": "2026-05-15T00:00:00.000Z",
     "lastLoginProvider": "GOOGLE",
-    "wallet": {
-      "balanceTokens": 50000,
-      "reservedTokens": 0,
-      "lifetimeTopUp": 100000,
-      "lifetimeSpent": 50000,
-      "availableTokens": 50000
-    },
+    "role": "USER",
+    "walletBalance": 50000,
+    "totalTopUp": 100000,
+    "totalSpent": 50000,
     "freeAudio": {
-      "dateKey": "2026-05-14",
+      "dateKey": "2026-05-15",
       "usedToday": 1,
       "dailyLimit": 3,
-      "paidAudioTokenCost": 1
+      "paidAudioCost": 2000
     },
     "providers": ["GOOGLE"]
   }
 }
 ```
 
+### POST /auth/dev-login — Body
+
+```json
+{ "email": "test@example.com", "displayName": "Test User" }
+```
+
 ---
 
 ## Upload Routes
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/upload` | Yes | Upload processed audio file |
+| Method | Path | Access | Description |
+|--------|------|--------|-------------|
+| POST | `/upload` | Protected + API Key + Rate Limited | Upload processed audio |
 
 ### POST /upload
 
-**Headers:**
-- `x-api-key` (optional, if configured)
-
-**Body:** `multipart/form-data`
-- `file` - Audio file (WAV, MP3, OGG, FLAC, M4A)
+**Headers:** `x-api-key` (required if `UPLOAD_API_KEY` is set)  
+**Body:** `multipart/form-data` with field `file` (audio: WAV, MP3, OGG)
 
 **Response (201):**
 ```json
@@ -79,22 +79,22 @@ All protected routes require an active session cookie (`connect.sid`). Session i
   "ok": true,
   "upload": {
     "id": "cuid",
-    "fileName": "track-processed.wav",
+    "fileName": "track.wav",
     "fileFormat": "wav",
-    "createdAt": "2026-05-14T00:00:00.000Z",
-    "tokenCost": 0,
+    "createdAt": "2026-05-15T00:00:00.000Z",
+    "costRupiah": 0,
     "freeCovered": 1,
     "paidUnits": 0
   }
 }
 ```
 
-**Error (402 - Insufficient tokens):**
+**Error (402):**
 ```json
 {
-  "error": "Not enough tokens",
-  "requiredTokens": 1,
-  "balanceTokens": 0,
+  "error": "Insufficient balance",
+  "required": 2000,
+  "balance": 0,
   "freeRemaining": 0
 }
 ```
@@ -103,14 +103,13 @@ All protected routes require an active session cookie (`connect.sid`). Session i
 
 ## History Routes
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/history` | Yes | Get upload history |
-| GET | `/history/:id/download` | Yes | Download a previous upload |
+| Method | Path | Access | Description |
+|--------|------|--------|-------------|
+| GET | `/history` | Protected | List upload history |
+| GET | `/history/:id/download` | Protected | Download previous upload |
 
-### GET /history
+### GET /history — Response
 
-**Response:**
 ```json
 {
   "uploads": [
@@ -121,51 +120,43 @@ All protected routes require an active session cookie (`connect.sid`). Session i
       "status": "COMPLETED",
       "source": "studio",
       "durationSec": null,
-      "createdAt": "2026-05-14T00:00:00.000Z",
-      "updatedAt": "2026-05-14T00:00:00.000Z",
-      "metadata": { "storedFileName": "1715...-track.wav" },
+      "createdAt": "2026-05-15T00:00:00.000Z",
+      "updatedAt": "2026-05-15T00:00:00.000Z",
+      "metadata": {},
       "activity": {
         "id": "cuid",
         "title": "Audio uploaded",
         "description": "Saved track.wav",
-        "amountTokens": 0,
-        "createdAt": "2026-05-14T00:00:00.000Z"
+        "amountRupiah": 0,
+        "createdAt": "2026-05-15T00:00:00.000Z"
       }
     }
   ]
 }
 ```
 
-### GET /history/:id/download
-
-**Response:** File stream (audio file)
-
 ---
 
 ## Top-Up Routes
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/topup/create` | Yes | Create QRIS payment via Bayar.gg |
-| GET | `/topup/status/:reference` | Yes | Poll payment status |
-| POST | `/webhooks/bayar` | No | Bayar.gg webhook (signature verified) |
+| Method | Path | Access | Validation | Description |
+|--------|------|--------|------------|-------------|
+| POST | `/topup/create` | Protected | Zod: `createTopUpSchema` | Create QRIS payment |
+| GET | `/topup/status/:reference` | Protected | — | Poll payment status |
+| POST | `/webhooks/bayar` | Public (signature verified) | — | Bayar.gg webhook |
 
-### POST /topup/create
+### POST /topup/create — Body
 
-**Body:**
 ```json
 {
   "amount": 50000,
-  "customer_name": "John Doe",
+  "customer_name": "John",
   "customer_email": "john@example.com",
   "customer_phone": "08123456789"
 }
 ```
 
-**Validation:**
-- `amount` must be integer
-- Minimum: Rp 1,000
-- Maximum: Rp 500,000
+**Validation:** `amount` integer, min 1000, max 500000.
 
 **Response (201):**
 ```json
@@ -174,75 +165,54 @@ All protected routes require an active session cookie (`connect.sid`). Session i
   "orderId": "cuid",
   "invoiceId": "INV-xxx",
   "amount": 50000,
-  "tokensBought": 50000,
   "paymentUrl": "https://bayar.gg/pay/...",
-  "expiresAt": "2026-05-14T00:15:00.000Z"
+  "qrisImageUrl": "https://...",
+  "expiresAt": "2026-05-15T00:15:00.000Z"
 }
 ```
 
-### GET /topup/status/:reference
+### GET /topup/status/:reference — Response
 
-**Params:** `reference` - Order ID or external invoice ID
-
-**Response:**
 ```json
 {
   "ok": true,
   "paid": false,
   "status": "PENDING",
   "amount": 50000,
-  "tokensBought": 50000,
-  "createdAt": "2026-05-14T00:00:00.000Z",
-  "updatedAt": "2026-05-14T00:00:00.000Z"
+  "finalAmount": null,
+  "createdAt": "2026-05-15T00:00:00.000Z",
+  "updatedAt": "2026-05-15T00:00:00.000Z"
 }
 ```
 
 ### POST /webhooks/bayar
 
-**Headers:**
-- `x-webhook-signature` - HMAC SHA256 signature
-- `x-webhook-timestamp` - Timestamp
-
-**Body (from Bayar.gg):**
-```json
-{
-  "invoice_id": "INV-xxx",
-  "status": "paid",
-  "amount": 50000,
-  "final_amount": 50000,
-  "unique_code": "123",
-  "paid_at": "2026-05-14T00:05:00.000Z",
-  "paid_reff_num": "REF123"
-}
-```
-
-**Behavior on `status: "paid"`:**
-1. Verify HMAC signature
-2. Find order by invoice ID
-3. Skip if already COMPLETED
-4. Atomic transaction: create activity log → create TopUpTransaction → update token wallet → update Rupiah wallet → create TokenTransaction → update order status
+**Headers:** `x-webhook-signature`, `x-webhook-timestamp`  
+**Behavior:** Atomic transaction — marks order COMPLETED + credits wallet + logs activity. Idempotent (duplicate webhooks are safely ignored).
 
 ---
 
 ## Product Routes (Store)
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/products` | No | List products (with filters) |
-| GET | `/products/categories` | No | List product categories |
-| GET | `/products/:idOrSlug` | No | Get product detail |
+| Method | Path | Access | Description |
+|--------|------|--------|-------------|
+| GET | `/products` | Public | List products (filter, search, sort, paginate) |
+| GET | `/products/categories` | Public | List categories |
+| GET | `/products/:idOrSlug` | Public | Product detail |
 
-### GET /products
+### GET /products — Query Params
 
-**Query params:**
-- `category` - Filter by category slug
-- `search` - Search in name, description, tags
-- `featured` - `"true"` to show only featured
-- `sort` - `newest` (default), `price-asc`, `price-desc`, `name`
-- `page` - Page number (default: 1)
-- `limit` - Items per page (default: 20)
+| Param | Type | Description |
+|-------|------|-------------|
+| `category` | string | Filter by category slug |
+| `search` | string | Search name/description/tags |
+| `featured` | `"true"` | Featured only |
+| `sort` | string | `newest`, `price-asc`, `price-desc`, `name` |
+| `page` | number | Page (default: 1) |
+| `limit` | number | Per page (default: 20) |
 
-**Response:**
+### GET /products — Response
+
 ```json
 {
   "products": [
@@ -250,74 +220,21 @@ All protected routes require an active session cookie (`connect.sid`). Session i
       "id": "cuid",
       "name": "Advanced UI System",
       "slug": "advanced-ui-system",
-      "shortDesc": "Complete UI framework for Roblox games",
+      "shortDesc": "Complete UI framework",
       "thumbnail": "https://...",
       "pricePersonal": 25000,
       "priceCommercial": 75000,
       "priceEnterprise": 200000,
       "featured": true,
       "version": "1.2.0",
-      "tags": ["ui", "framework", "menu"],
+      "tags": ["ui", "framework"],
       "category": { "id": "cuid", "name": "UI Systems", "slug": "ui-systems" },
       "image": "https://...",
       "soldCount": 42,
       "createdAt": "2026-05-01T00:00:00.000Z"
     }
   ],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 15,
-    "totalPages": 1
-  }
-}
-```
-
-### GET /products/categories
-
-**Response:**
-```json
-{
-  "categories": [
-    {
-      "id": "cuid",
-      "name": "UI Systems",
-      "slug": "ui-systems",
-      "description": "Interface frameworks and HUDs",
-      "icon": "layout",
-      "productCount": 5
-    }
-  ]
-}
-```
-
-### GET /products/:idOrSlug
-
-**Response:**
-```json
-{
-  "id": "cuid",
-  "name": "Advanced UI System",
-  "slug": "advanced-ui-system",
-  "description": "Full markdown description...",
-  "shortDesc": "Complete UI framework",
-  "thumbnail": "https://...",
-  "pricePersonal": 25000,
-  "priceCommercial": 75000,
-  "priceEnterprise": 200000,
-  "featured": true,
-  "version": "1.2.0",
-  "tags": ["ui", "framework"],
-  "category": { "id": "cuid", "name": "UI Systems", "slug": "ui-systems" },
-  "images": [
-    { "id": "cuid", "url": "https://...", "alt": "Screenshot 1", "sortOrder": 0 }
-  ],
-  "docs": [
-    { "id": "cuid", "fileName": "README.md", "fileType": "documentation", "version": "1.2.0" }
-  ],
-  "soldCount": 42,
-  "createdAt": "2026-05-01T00:00:00.000Z",
-  "updatedAt": "2026-05-10T00:00:00.000Z"
+  "pagination": { "page": 1, "limit": 20, "total": 15, "totalPages": 1 }
 }
 ```
 
@@ -325,119 +242,42 @@ All protected routes require an active session cookie (`connect.sid`). Session i
 
 ## Cart Routes
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/cart` | Yes | Get cart contents |
-| POST | `/cart/add` | Yes | Add product to cart |
-| DELETE | `/cart/:itemId` | Yes | Remove item from cart |
-| DELETE | `/cart` | Yes | Clear entire cart |
+| Method | Path | Access | Validation | Description |
+|--------|------|--------|------------|-------------|
+| GET | `/cart` | Protected | — | Get cart |
+| POST | `/cart/add` | Protected | Zod: `addToCartSchema` | Add to cart |
+| DELETE | `/cart/:itemId` | Protected | — | Remove item |
+| DELETE | `/cart` | Protected | — | Clear cart |
 
-### GET /cart
+### POST /cart/add — Body
 
-**Response:**
 ```json
-{
-  "items": [
-    {
-      "id": "cuid",
-      "productId": "cuid",
-      "product": {
-        "id": "cuid",
-        "name": "Advanced UI System",
-        "slug": "advanced-ui-system",
-        "thumbnail": "https://...",
-        "pricePersonal": 25000,
-        "priceCommercial": 75000,
-        "priceEnterprise": 200000,
-        "active": true
-      },
-      "licenseType": "PERSONAL",
-      "priceRupiah": 25000,
-      "addedAt": "2026-05-14T00:00:00.000Z"
-    }
-  ],
-  "total": 25000
-}
+{ "productId": "cuid", "licenseType": "PERSONAL" }
 ```
 
-### POST /cart/add
-
-**Body:**
-```json
-{
-  "productId": "cuid",
-  "licenseType": "PERSONAL"
-}
-```
-
-`licenseType` options: `PERSONAL`, `COMMERCIAL`, `ENTERPRISE`
-
-**Response (201):**
-```json
-{
-  "ok": true,
-  "item": { "id": "cuid", "cartId": "cuid", "productId": "cuid", "licenseType": "PERSONAL", "priceRupiah": 25000 },
-  "updated": false
-}
-```
-
-**Error (409):**
-```json
-{ "error": "You already own a license for this product" }
-```
+`licenseType`: `PERSONAL` | `COMMERCIAL` | `ENTERPRISE`
 
 ---
 
 ## Checkout Route
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/checkout` | Yes | Purchase all cart items |
+| Method | Path | Access | Description |
+|--------|------|--------|-------------|
+| POST | `/checkout` | Protected | Purchase all cart items |
 
-### POST /checkout
+### POST /checkout — Response (201)
 
-No body required. Purchases all items currently in cart.
-
-**Flow:**
-1. Validate cart has items
-2. Filter out inactive products
-3. Check wallet balance >= total
-4. Check no duplicate licenses
-5. Atomic: deduct balance → create purchases → generate license keys → create licenses → log activity → clear cart
-
-**Response (201):**
 ```json
 {
   "ok": true,
   "purchases": [
-    {
-      "id": "cuid",
-      "productId": "cuid",
-      "licenseType": "PERSONAL",
-      "amountRupiah": 25000
-    }
+    { "id": "cuid", "productId": "cuid", "licenseType": "PERSONAL", "amountRupiah": 25000 }
   ],
   "licenses": [
-    {
-      "id": "cuid",
-      "productId": "cuid",
-      "licenseKey": "RBXR-A1B2-C3D4-E5F6-G7H8",
-      "licenseType": "PERSONAL",
-      "maxGames": 3
-    }
+    { "id": "cuid", "productId": "cuid", "licenseKey": "RBXR-A1B2-C3D4-E5F6-G7H8", "licenseType": "PERSONAL", "maxGames": 3 }
   ],
   "totalCharged": 25000,
   "newBalance": 75000
-}
-```
-
-**Error (402):**
-```json
-{
-  "error": "Insufficient balance",
-  "required": 25000,
-  "balance": 10000,
-  "shortfall": 15000
 }
 ```
 
@@ -445,160 +285,81 @@ No body required. Purchases all items currently in cart.
 
 ## License Management Routes
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/licenses` | Yes | List user's licenses |
-| GET | `/licenses/:id` | Yes | Get license detail |
-| POST | `/licenses/:id/whitelist` | Yes | Add game to whitelist |
-| DELETE | `/licenses/:id/whitelist/:gameWhitelistId` | Yes | Remove game from whitelist |
-| GET | `/licenses/:id/download` | Yes | Download script files |
+| Method | Path | Access | Validation | Description |
+|--------|------|--------|------------|-------------|
+| GET | `/licenses` | Protected | — | List user's licenses |
+| GET | `/licenses/:id` | Protected | — | License detail |
+| POST | `/licenses/:id/whitelist` | Protected | Zod: `addGameWhitelistSchema` | Add game |
+| DELETE | `/licenses/:id/whitelist/:gameWhitelistId` | Protected | — | Remove game |
+| GET | `/licenses/:id/download` | Protected | — | Download script file |
 
-### GET /licenses
+### POST /licenses/:id/whitelist — Body
 
-**Response:**
 ```json
-{
-  "licenses": [
-    {
-      "id": "cuid",
-      "licenseKey": "RBXR-A1B2-C3D4-E5F6-G7H8",
-      "licenseType": "PERSONAL",
-      "status": "ACTIVE",
-      "maxGames": 3,
-      "expiresAt": null,
-      "lastVerifiedAt": "2026-05-14T00:00:00.000Z",
-      "product": {
-        "id": "cuid",
-        "name": "Advanced UI System",
-        "slug": "advanced-ui-system",
-        "thumbnail": "https://...",
-        "version": "1.2.0"
-      },
-      "games": [
-        { "id": "cuid", "gameId": "123456789", "gameName": "My Game", "addedAt": "..." }
-      ],
-      "verificationCount": 15,
-      "createdAt": "2026-05-01T00:00:00.000Z"
-    }
-  ]
-}
+{ "gameId": "123456789", "gameName": "My Roblox Game" }
 ```
 
-### POST /licenses/:id/whitelist
-
-**Body:**
-```json
-{
-  "gameId": "123456789",
-  "gameName": "My Roblox Game"
-}
-```
-
-`gameId` is the Roblox placeId or universeId.
-
-**Response (201):**
-```json
-{
-  "ok": true,
-  "game": {
-    "id": "cuid",
-    "licenseId": "cuid",
-    "gameId": "123456789",
-    "gameName": "My Roblox Game",
-    "active": true,
-    "addedAt": "2026-05-14T00:00:00.000Z"
-  }
-}
-```
-
-**Error (403 - max games reached):**
-```json
-{
-  "error": "Maximum games reached for this license tier",
-  "maxGames": 3,
-  "currentGames": 3
-}
-```
-
-### GET /licenses/:id/download
-
-**Response:** File stream (script file)
+**License tier limits:** Personal = 3 games, Commercial = 10, Enterprise = unlimited.
 
 ---
 
 ## License Verification (Roblox Integration)
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/verify-license` | No | Verify license key from Roblox game |
+| Method | Path | Access | Validation | Description |
+|--------|------|--------|------------|-------------|
+| POST | `/api/verify-license` | Public (rate limited: 30/min) | Zod: `verifyLicenseSchema` | Verify license from Roblox |
 
-### POST /api/verify-license
+### POST /api/verify-license — Body
 
-This endpoint is called from Roblox game servers. No session auth required - uses license key for authentication.
-
-**Body:**
 ```json
-{
-  "licenseKey": "RBXR-A1B2-C3D4-E5F6-G7H8",
-  "gameId": "123456789",
-  "gameName": "My Roblox Game"
-}
+{ "licenseKey": "RBXR-A1B2-C3D4-E5F6-G7H8", "gameId": "123456789", "gameName": "My Game" }
 ```
 
-**Response (valid):**
+### Response (valid)
+
 ```json
 {
   "valid": true,
   "message": "License verified successfully",
-  "product": {
-    "name": "Advanced UI System",
-    "version": "1.2.0"
-  },
-  "license": {
-    "type": "PERSONAL",
-    "expiresAt": null
-  }
+  "product": { "name": "Advanced UI System", "version": "1.2.0" },
+  "license": { "type": "PERSONAL", "expiresAt": null }
 }
 ```
 
-**Response (invalid - various reasons):**
+### Response (invalid)
+
 ```json
-{ "valid": false, "message": "Invalid license key" }
-{ "valid": false, "message": "License is suspended" }
-{ "valid": false, "message": "License has expired" }
-{ "valid": false, "message": "Product is no longer available" }
-{ "valid": false, "message": "Game is not whitelisted for this license. Add it in your dashboard.", "licenseType": "PERSONAL" }
+{ "valid": false, "message": "Game is not whitelisted for this license. Add it in your dashboard." }
 ```
 
-**Roblox Lua Integration Example:**
+**Verification checks (in order):** key exists → status ACTIVE → not expired → product active → game whitelisted.
+
+### Roblox Lua Example
+
 ```lua
 local HttpService = game:GetService("HttpService")
-
 local LICENSE_KEY = "RBXR-A1B2-C3D4-E5F6-G7H8"
 local VERIFY_URL = "https://yourdomain.com/api/verify-license"
 
 local function verifyLicense()
-    local success, response = pcall(function()
+    local ok, res = pcall(function()
         return HttpService:PostAsync(VERIFY_URL, HttpService:JSONEncode({
             licenseKey = LICENSE_KEY,
             gameId = tostring(game.PlaceId),
             gameName = game.Name
         }), Enum.HttpContentType.ApplicationJson)
     end)
-
-    if success then
-        local data = HttpService:JSONDecode(response)
+    if ok then
+        local data = HttpService:JSONDecode(res)
         if data.valid then
-            print("[License] Verified:", data.product.name, "v" .. data.product.version)
+            print("[License] OK:", data.product.name, "v" .. data.product.version)
             return true
-        else
-            warn("[License] Failed:", data.message)
-            return false
         end
+        warn("[License]", data.message)
     else
-        warn("[License] Network error:", response)
-        return false
+        warn("[License] Network error:", res)
     end
+    return false
 end
 
 if not verifyLicense() then
@@ -608,35 +369,92 @@ end
 
 ---
 
-## Health Check Routes
+## Admin Routes
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/health` | No | Server health check |
-| GET | `/db-health` | No | Database connection check |
+All admin routes require `requireAuth` + `requireAdmin` (user.role === "ADMIN").
+
+| Method | Path | Validation | Description |
+|--------|------|------------|-------------|
+| GET | `/admin/products` | — | List all products (incl. inactive) |
+| POST | `/admin/products` | Zod: `createProductSchema` | Create product |
+| PUT | `/admin/products/:id` | Zod: `updateProductSchema` | Update product |
+| DELETE | `/admin/products/:id` | — | Deactivate product |
+| POST | `/admin/products/:id/files` | Zod: `addProductFileSchema` | Add file record |
+| DELETE | `/admin/products/:productId/files/:fileId` | — | Remove file |
+| POST | `/admin/categories` | Zod: `createCategorySchema` | Create category |
+| PUT | `/admin/categories/:id` | Zod: `updateCategorySchema` | Update category |
+| DELETE | `/admin/categories/:id` | — | Deactivate category |
+| GET | `/admin/licenses` | — | List all licenses (filterable) |
+| PUT | `/admin/licenses/:id/status` | Zod: `updateLicenseStatusSchema` | Suspend/revoke/activate |
+| GET | `/admin/analytics` | — | Sales overview |
 
 ---
 
-## License Tier Comparison
+## Health Routes
 
-| Feature | Personal | Commercial | Enterprise |
-|---------|----------|------------|------------|
-| Max Games | 3 | 10 | Unlimited |
-| Expiry | Lifetime | Lifetime | Lifetime |
-| Use Case | Own games | Client work | Studios |
+| Method | Path | Access | Description |
+|--------|------|--------|-------------|
+| GET | `/health` | Public | Server health |
+| GET | `/db-health` | Public | Database connection check |
 
 ---
 
-## Error Codes
+## Security Notes
+
+- **CORS:** Explicit origin from `CORS_ORIGIN` env (no wildcard with credentials)
+- **Session:** `SESSION_SECRET` required in production (server exits if missing)
+- **Rate limiting:** Upload endpoint + verify-license (30 req/min)
+- **Webhook:** HMAC SHA256 signature verification + atomic idempotent processing
+- **Admin files:** Path traversal blocked (no `..`, must be relative)
+- **Validation:** Zod schemas on all state-changing endpoints
+
+---
+
+## Error Format
+
+```json
+{
+  "error": "Human-readable message",
+  "details": [
+    { "field": "amount", "message": "Minimum Rp 1,000" }
+  ]
+}
+```
 
 | Status | Meaning |
 |--------|---------|
-| 400 | Bad request / validation error |
-| 401 | Not authenticated / invalid signature |
-| 402 | Insufficient balance / tokens |
-| 403 | Forbidden (max games, etc.) |
-| 404 | Resource not found |
-| 409 | Conflict (duplicate license, already in cart) |
+| 400 | Validation error |
+| 401 | Not authenticated |
+| 402 | Insufficient balance |
+| 403 | Forbidden (not admin, max games) |
+| 404 | Not found |
+| 409 | Conflict (duplicate) |
 | 429 | Rate limited |
-| 500 | Internal server error |
+| 500 | Server error |
 | 502 | Payment gateway error |
+
+---
+
+## Wallet Model
+
+Single source of truth: `User.walletBalance` (Rupiah).  
+All mutations recorded in `WalletTransaction` ledger with `balanceAfter` snapshot.
+
+| Transaction Type | Trigger |
+|-----------------|---------|
+| `TOP_UP` | Bayar.gg webhook confirms payment |
+| `PURCHASE` | Script checkout |
+| `AUDIO_CHARGE` | Paid audio upload (after free quota) |
+| `REFUND` | Admin refund |
+| `ADJUSTMENT` | Admin correction |
+
+---
+
+## Pricing
+
+**Audio processing (per upload after free quota):**  
+`User.paidAudioCost` (default: Rp 2,000)
+
+**Free quota:** 3 uploads/day, resets at midnight (date key comparison).
+
+**Script store:** Per-product pricing with 3 tiers (Personal/Commercial/Enterprise).

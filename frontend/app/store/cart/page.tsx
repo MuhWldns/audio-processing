@@ -42,15 +42,22 @@ export default function CartPage() {
 
   const handleRemove = async () => {
     if (!removingId) return;
-    setRemoveLoading(true);
+    
+    // Optimistic: remove from UI immediately
+    const previousItems = items;
+    const previousTotal = total;
+    const removedItem = items.find((i) => i.id === removingId);
+    setItems((prev) => prev.filter((i) => i.id !== removingId));
+    setTotal((prev) => prev - (removedItem?.priceRupiah ?? 0));
+    setRemovingId(null);
+
     try {
       await removeFromCart(removingId);
-      setRemovingId(null);
-      void loadCart();
     } catch (err) {
+      // Rollback on failure
+      setItems(previousItems);
+      setTotal(previousTotal);
       setError(err instanceof Error ? err.message : 'Gagal menghapus item');
-    } finally {
-      setRemoveLoading(false);
     }
   };
 

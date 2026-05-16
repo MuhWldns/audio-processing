@@ -15,6 +15,19 @@ import { configurePassport } from "./services/authService.js";
 // Middlewares
 import { ensureAuthReady, requireAuth, createUploadLimiter, validateApiKey, validateAudioFile, requireAdmin } from "./middlewares/index.js";
 import { configureMulter } from "./services/uploadService.js";
+import { validate } from "./validators/index.js";
+import {
+  createTopUpSchema,
+  addToCartSchema,
+  createProductSchema,
+  updateProductSchema,
+  createCategorySchema,
+  updateCategorySchema,
+  addProductFileSchema,
+  updateLicenseStatusSchema,
+  addGameWhitelistSchema,
+  verifyLicenseSchema,
+} from "./validators/schemas.js";
 
 // Controllers
 import {
@@ -59,6 +72,8 @@ import {
   handleAdminDeleteProductFile,
 } from "./controllers/index.js";
 
+import multer from "multer";
+
 // Config
 import { UPLOAD_RATE_LIMIT, DEFAULT_SESSION_MAX_AGE } from "./config/index.js";
 const __filename = fileURLToPath(import.meta.url);
@@ -92,7 +107,14 @@ const port = process.env.PORT ? Number(process.env.PORT) : 3001;
 
 // Environment variables
 const apiKey = process.env.UPLOAD_API_KEY || "";
-const sessionSecret = process.env.SESSION_SECRET || "replace-me";
+const sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret) {
+  if (process.env.NODE_ENV === "production") {
+    console.error("FATAL: SESSION_SECRET is required in production");
+    process.exit(1);
+  }
+  console.warn("WARNING: SESSION_SECRET not set, using insecure default for development only");
+}
 const frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN || "http://localhost:5173";
 const uploadDir = path.join(__dirname, "..", "uploads");
 
@@ -108,12 +130,36 @@ const uploadLimiter = createUploadLimiter({
   maxRequests: process.env.UPLOAD_RATE_LIMIT ? Number(process.env.UPLOAD_RATE_LIMIT) : UPLOAD_RATE_LIMIT.MAX_REQUESTS,
 });
 
+// Rate limiter for license verification (stricter)
+const verifyLicenseLimiter = createUploadLimiter({
+  windowMinutes: 1,
+  maxRequests: 30,
+});
+
+// Rate limiter for checkout (per-user)
+const checkoutLimiter = createUploadLimiter({
+  windowMinutes: 1,
+  maxRequests: 5,
+});
+
+// Rate limiter for top-up creation
+const topupLimiter = createUploadLimiter({
+  windowMinutes: 1,
+  maxRequests: 5,
+});
+
+// Memory-based multer for admin file uploads (goes to B2, not local disk)
+const adminFileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+});
+
 // Middleware setup
 app.set("trust proxy", 1);
 app.use(helmet());
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || "*",
+    origin: process.env.CORS_ORIGIN || "http://localhost:5173",
     credentials: true,
   }),
 );
@@ -121,7 +167,7 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(
   session({
-    secret: sessionSecret,
+    secret: sessionSecret || "dev-only-insecure-secret",
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -155,7 +201,7 @@ app.get("/history", requireAuth, handleGetHistory);
 app.get("/history/:id/download", requireAuth, handleDownloadHistory);
 
 // Top up routes
-app.post("/topup/create", requireAuth, handleCreateTopUp);
+app.post("/topup/create", requireAuth, topupLimiter, validate(createTopUpSchema), handleCreateTopUp);
 app.get("/topup/status/:reference", requireAuth, handleGetTopUpStatus);
 app.post("/webhooks/bayar", handleBayarWebhook);
 
@@ -163,8 +209,8 @@ app.post("/webhooks/bayar", handleBayarWebhook);
 app.get("/health", handleHealthCheck);
 app.get("/db-health", handleDbHealthCheck);
 
-// Dev-only routes (not available in production)
-if (process.env.NODE_ENV !== "production") {
+// Dev-only routes (only in development, not staging/production)
+if (process.env.NODE_ENV === "development") {
   app.post("/auth/dev-login", handleDevLogin);
 }
 
@@ -177,50 +223,50 @@ app.get("/products/:idOrSlug", handleGetProductDetail);
 
 // Cart routes (protected)
 app.get("/cart", requireAuth, handleGetCart);
-app.post("/cart/add", requireAuth, handleAddToCart);
+app.post("/cart/add", requireAuth, validate(addToCartSchema), handleAddToCart);
 app.delete("/cart/:itemId", requireAuth, handleRemoveFromCart);
 app.delete("/cart", requireAuth, handleClearCart);
 
-// Checkout route (protected)
-app.post("/checkout", requireAuth, handleCheckout);
+// Checkout route (protected, rate limited)
+app.post("/checkout", requireAuth, checkoutLimiter, handleCheckout);
 
 // License management routes (protected)
 app.get("/licenses", requireAuth, handleGetLicenses);
 app.get("/licenses/:id", requireAuth, handleGetLicenseDetail);
-app.post("/licenses/:id/whitelist", requireAuth, handleAddGameToWhitelist);
+app.post("/licenses/:id/whitelist", requireAuth, validate(addGameWhitelistSchema), handleAddGameToWhitelist);
 app.delete("/licenses/:id/whitelist/:gameWhitelistId", requireAuth, handleRemoveGameFromWhitelist);
 app.get("/licenses/:id/download", requireAuth, handleDownloadLicenseFiles);
 
-// License verification (public - called from Roblox games)
-app.post("/api/verify-license", handleVerifyLicense);
+// License verification (public - called from Roblox games, rate limited)
+app.post("/api/verify-license", verifyLicenseLimiter, validate(verifyLicenseSchema), handleVerifyLicense);
 
 // ==================== ADMIN ROUTES ====================
 
 // Admin - Products
 app.get("/admin/products", requireAuth, requireAdmin, handleAdminListProducts);
-app.post("/admin/products", requireAuth, requireAdmin, handleAdminCreateProduct);
-app.put("/admin/products/:id", requireAuth, requireAdmin, handleAdminUpdateProduct);
+app.post("/admin/products", requireAuth, requireAdmin, validate(createProductSchema), handleAdminCreateProduct);
+app.put("/admin/products/:id", requireAuth, requireAdmin, validate(updateProductSchema), handleAdminUpdateProduct);
 app.delete("/admin/products/:id", requireAuth, requireAdmin, handleAdminDeleteProduct);
-app.post("/admin/products/:id/files", requireAuth, requireAdmin, handleAdminAddProductFile);
+app.post("/admin/products/:id/files", requireAuth, requireAdmin, adminFileUpload.single("file"), handleAdminAddProductFile);
 app.delete("/admin/products/:productId/files/:fileId", requireAuth, requireAdmin, handleAdminDeleteProductFile);
 
 // Admin - Categories
-app.post("/admin/categories", requireAuth, requireAdmin, handleAdminCreateCategory);
-app.put("/admin/categories/:id", requireAuth, requireAdmin, handleAdminUpdateCategory);
+app.post("/admin/categories", requireAuth, requireAdmin, validate(createCategorySchema), handleAdminCreateCategory);
+app.put("/admin/categories/:id", requireAuth, requireAdmin, validate(updateCategorySchema), handleAdminUpdateCategory);
 app.delete("/admin/categories/:id", requireAuth, requireAdmin, handleAdminDeleteCategory);
 
 // Admin - Licenses
 app.get("/admin/licenses", requireAuth, requireAdmin, handleAdminListLicenses);
-app.put("/admin/licenses/:id/status", requireAuth, requireAdmin, handleAdminUpdateLicenseStatus);
+app.put("/admin/licenses/:id/status", requireAuth, requireAdmin, validate(updateLicenseStatusSchema), handleAdminUpdateLicenseStatus);
 
 // Admin - Analytics
 app.get("/admin/analytics", requireAuth, requireAdmin, handleAdminAnalytics);
 
-// Error handling middleware (basic)
+// Error handling middleware
 app.use((err, req, res, next) => {
   console.error("Server error:", err);
   res.status(err.status || 500).json({
-    error: process.env.NODE_ENV === "production" ? "Internal server error" : err.message,
+    error: process.env.NODE_ENV === "development" ? err.message : "Internal server error",
   });
 });
 

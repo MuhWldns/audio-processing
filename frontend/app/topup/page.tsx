@@ -274,7 +274,7 @@ export default function TopUpPage() {
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-xs font-bold text-violet-300">2</span>
-                <span>Klik "Lanjut ke QRIS" untuk generate QR code</span>
+                <span>Klik &ldquo;Lanjut ke QRIS&rdquo; untuk generate QR code</span>
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-xs font-bold text-violet-300">3</span>
