@@ -17,7 +17,7 @@ export const handleGoogleCallback = async (req, res) => {
   }
 
   const frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN || "http://localhost:5173";
-  return res.redirect(`${frontendUrl}/studio?login=success`);
+  return res.redirect(`${frontendUrl}/?login=success`);
 };
 
 /**
@@ -31,7 +31,7 @@ export const handleDiscordCallback = async (req, res) => {
   }
 
   const frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN || "http://localhost:5173";
-  return res.redirect(`${frontendUrl}/studio?login=success`);
+  return res.redirect(`${frontendUrl}/?login=success`);
 };
 
 /**
@@ -59,7 +59,10 @@ export const handleLogout = async (req, res, next) => {
         },
       });
 
-      res.clearCookie("connect.sid");
+      res.clearCookie("connect.sid", {
+        domain: process.env.COOKIE_DOMAIN || undefined,
+        path: "/",
+      });
       return res.json({ ok: true });
     });
   });
