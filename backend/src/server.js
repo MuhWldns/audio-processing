@@ -70,6 +70,9 @@ import {
   handleAdminAnalytics,
   handleAdminAddProductFile,
   handleAdminDeleteProductFile,
+  handleAdminActiveLicenses,
+  handleAdminLicenseLogs,
+  handleAdminKillSwitch,
   handleLicenseHandshake,
   handleLicenseHeartbeat,
   handleLicenseEnforce,
@@ -270,7 +273,10 @@ app.delete("/admin/categories/:id", requireAuth, requireAdmin, handleAdminDelete
 
 // Admin - Licenses
 app.get("/admin/licenses", requireAuth, requireAdmin, handleAdminListLicenses);
+app.get("/admin/licenses/active", requireAuth, requireAdmin, handleAdminActiveLicenses);
+app.get("/admin/licenses/:id/logs", requireAuth, requireAdmin, handleAdminLicenseLogs);
 app.put("/admin/licenses/:id/status", requireAuth, requireAdmin, validate(updateLicenseStatusSchema), handleAdminUpdateLicenseStatus);
+app.post("/admin/licenses/:id/kill", requireAuth, requireAdmin, handleAdminKillSwitch);
 
 // Admin - Analytics
 app.get("/admin/analytics", requireAuth, requireAdmin, handleAdminAnalytics);

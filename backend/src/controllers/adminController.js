@@ -420,3 +420,141 @@ export const handleAdminDeleteProductFile = async (req, res) => {
 
   return res.status(200).json({ ok: true, message: "File removed" });
 };
+
+// ==================== LICENSE ENFORCEMENT ADMIN ====================
+
+/**
+ * GET /admin/licenses/active - Get currently active licenses (verified within last 5 min)
+ */
+export const handleAdminActiveLicenses = async (req, res) => {
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+
+  const activeLicenses = await prisma.license.findMany({
+    where: {
+      status: "ACTIVE",
+      lastVerifiedAt: { gte: fiveMinutesAgo },
+    },
+    orderBy: { lastVerifiedAt: "desc" },
+    include: {
+      user: { select: { id: true, email: true, displayName: true } },
+      product: { select: { id: true, name: true, slug: true } },
+      gameWhitelist: {
+        where: { active: true },
+        select: { gameId: true, gameName: true },
+      },
+    },
+  });
+
+  return res.status(200).json({
+    count: activeLicenses.length,
+    licenses: activeLicenses.map((l) => ({
+      id: l.id,
+      licenseKey: l.licenseKey,
+      licenseType: l.licenseType,
+      lastVerifiedAt: l.lastVerifiedAt,
+      user: l.user,
+      product: l.product,
+      activeGames: l.gameWhitelist,
+      metadata: l.metadata,
+    })),
+  });
+};
+
+/**
+ * GET /admin/licenses/:id/logs - Get verification logs for a license
+ */
+export const handleAdminLicenseLogs = async (req, res) => {
+  const { id } = req.params;
+  const { page = 1, limit = 50 } = req.query;
+  const safePage = Math.max(Number(page) || 1, 1);
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
+  const skip = (safePage - 1) * safeLimit;
+
+  const license = await prisma.license.findUnique({
+    where: { id },
+    select: { id: true, licenseKey: true },
+  });
+
+  if (!license) {
+    return res.status(404).json({ error: "License not found" });
+  }
+
+  const [logs, total] = await Promise.all([
+    prisma.licenseVerification.findMany({
+      where: { licenseId: id },
+      orderBy: { verifiedAt: "desc" },
+      take: safeLimit,
+      skip,
+    }),
+    prisma.licenseVerification.count({ where: { licenseId: id } }),
+  ]);
+
+  return res.status(200).json({
+    licenseId: id,
+    licenseKey: license.licenseKey,
+    logs,
+    pagination: { page: safePage, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
+  });
+};
+
+/**
+ * POST /admin/licenses/:id/kill - Force trigger enforcement (kill switch)
+ */
+export const handleAdminKillSwitch = async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+
+  const license = await prisma.license.findUnique({
+    where: { id },
+    include: {
+      user: { select: { id: true, email: true, displayName: true } },
+      product: { select: { name: true } },
+    },
+  });
+
+  if (!license) {
+    return res.status(404).json({ error: "License not found" });
+  }
+
+  // Suspend the license immediately
+  const updated = await prisma.license.update({
+    where: { id },
+    data: {
+      status: "SUSPENDED",
+      metadata: {
+        ...(license.metadata || {}),
+        killSwitch: {
+          triggeredAt: new Date().toISOString(),
+          triggeredBy: "admin",
+          reason: reason || "Manual kill switch",
+        },
+        statusHistory: [
+          ...((license.metadata?.statusHistory) || []),
+          { from: license.status, to: "SUSPENDED", reason: reason || "Kill switch", at: new Date().toISOString(), by: "admin" },
+        ],
+      },
+    },
+  });
+
+  // Log activity
+  await prisma.activityLog.create({
+    data: {
+      userId: license.userId,
+      type: "TOKEN_USAGE",
+      status: "INFO",
+      title: "License killed",
+      description: `License for "${license.product.name}" suspended via kill switch${reason ? `: ${reason}` : ""}`,
+      metadata: { licenseId: id, reason },
+    },
+  });
+
+  return res.status(200).json({
+    ok: true,
+    license: {
+      id: updated.id,
+      licenseKey: updated.licenseKey,
+      status: updated.status,
+    },
+    message: "License suspended. Next heartbeat will trigger enforcement.",
+  });
+};
