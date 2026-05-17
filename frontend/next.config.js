@@ -21,8 +21,8 @@ const nextConfig = {
   async headers() {
     return [
       {
-        // Required for FFmpeg WASM (SharedArrayBuffer)
-        source: '/(.*)',
+        // Required for FFmpeg WASM (SharedArrayBuffer) - only on audio studio
+        source: '/audio/studio',
         headers: [
           {
             key: 'Cross-Origin-Opener-Policy',
