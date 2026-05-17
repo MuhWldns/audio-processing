@@ -19,11 +19,11 @@ module.exports = {
     },
     {
       name: 'rbx-frontend',
-      script: 'node_modules/.bin/next',
-      args: 'start -p 3002',
+      script: '.next/standalone/server.js',
       cwd: './frontend',
       env_production: {
         NODE_ENV: 'production',
+        PORT: 5174,
       },
       instances: 1,
       autorestart: true,
