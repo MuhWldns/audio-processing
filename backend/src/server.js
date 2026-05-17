@@ -70,6 +70,9 @@ import {
   handleAdminAnalytics,
   handleAdminAddProductFile,
   handleAdminDeleteProductFile,
+  handleLicenseHandshake,
+  handleLicenseHeartbeat,
+  handleLicenseEnforce,
 } from "./controllers/index.js";
 
 import multer from "multer";
@@ -240,6 +243,15 @@ app.get("/licenses/:id/download", requireAuth, handleDownloadLicenseFiles);
 
 // License verification (public - called from Roblox games, rate limited)
 app.post("/api/verify-license", verifyLicenseLimiter, validate(verifyLicenseSchema), handleVerifyLicense);
+
+// License enforcement (public - called from Roblox asset module, rate limited)
+const licenseHandshakeLimiter = createUploadLimiter({ windowMinutes: 1, maxRequests: 10 });
+const licenseHeartbeatLimiter = createUploadLimiter({ windowMinutes: 1, maxRequests: 15 });
+const licenseEnforceLimiter = createUploadLimiter({ windowMinutes: 1, maxRequests: 5 });
+
+app.post("/api/license/handshake", licenseHandshakeLimiter, handleLicenseHandshake);
+app.post("/api/license/heartbeat", licenseHeartbeatLimiter, handleLicenseHeartbeat);
+app.post("/api/license/enforce", licenseEnforceLimiter, handleLicenseEnforce);
 
 // ==================== ADMIN ROUTES ====================
 

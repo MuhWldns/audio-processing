@@ -14,3 +14,4 @@ export * from "./licenseController.js";
 export * from "./verifyLicenseController.js";
 export * from "./devController.js";
 export * from "./adminController.js";
+export * from "./licenseEnforceController.js";
