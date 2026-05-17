@@ -887,3 +887,115 @@ Audio processing dilakukan sepenuhnya di browser (client-side) menggunakan Web A
 *Dokumen ini merupakan gambaran besar teknis sistem RBX Royale. Detail implementasi dapat dilihat langsung di source code repository.*
 
 *Terakhir diperbarui: 17 Mei 2026*
+
+---
+
+## 10. License Enforcement System
+
+### 10.1 Overview
+
+Sistem enforcement lisensi menggunakan arsitektur multi-layer untuk melindungi script yang dijual di store. Buyer mendapat file .rbxm yang berisi loader script (obfuscated) yang melakukan handshake ke server. Server mengembalikan signKey dan runtime config yang dibutuhkan core module untuk berfungsi. Jika lisensi tidak valid, server mengirim encrypted breaking code yang di-execute di runtime.
+
+### 10.2 Endpoints
+
+| Method | Path | Rate Limit | Fungsi |
+|---|---|---|---|
+| POST | /api/license/handshake | 10 req/menit | Verifikasi awal + return signKey + session token |
+| POST | /api/license/heartbeat | 15 req/menit | Periodic recheck + rotasi signKey (setiap 5 menit) |
+| POST | /api/license/enforce | 5 req/menit | Return encrypted breaking code per phase |
+
+### 10.3 Handshake Flow
+
+1. Game start, loader script di .rbxm melakukan require(assetId) ke Roblox asset milik developer
+2. Asset module mengambil license key dari config
+3. Asset module HTTP POST ke /api/license/handshake dengan licenseKey + gameId
+4. Server validasi: key ada, status ACTIVE, belum expired, product active, game whitelisted
+5. Jika valid: server return signKey (HMAC-based, rotate tiap 5 menit) + sessionToken
+6. Jika invalid: server return { valid: false, reason: "..." }
+7. Asset module menyimpan signKey dan sessionToken untuk heartbeat
+
+### 10.4 Heartbeat Flow
+
+1. Setiap 5 menit, asset module POST ke /api/license/heartbeat dengan licenseKey + gameId + sessionToken
+2. Server re-validasi license status (bisa saja admin revoke di antara heartbeats)
+3. Server validasi sessionToken cocok dengan yang tersimpan
+4. Jika valid: return signKey baru (rotated)
+5. Jika invalid: return { valid: false } — trigger enforcement
+
+### 10.5 Enforcement Flow
+
+Jika handshake atau heartbeat gagal, asset module memanggil /api/license/enforce untuk mendapatkan breaking code.
+
+1. Asset module POST ke /api/license/enforce dengan licenseKey + gameId + phase
+2. Server generate Lua code sesuai phase
+3. Server encrypt code menggunakan derived key: HMAC(signKey + licenseKey + gameId)
+4. Server return encrypted payload (base64)
+5. Asset module decrypt menggunakan derived key yang sama (computed dari komponen yang sudah dimiliki)
+6. Asset module execute code via loadstring (tersembunyi di balik obfuscation)
+7. Setelah delay, request phase berikutnya (escalation)
+
+### 10.6 Encryption
+
+Payload enforcement di-encrypt menggunakan XOR cipher dengan derived key:
+
+- Server: derivedKey = HMAC-SHA256(signKey + licenseKey + gameId, serverSecret).slice(0, 32)
+- Server: encryptedPayload = base64(XOR(luaCode, derivedKey))
+- Client: derivedKey = compute dari signKey (dari handshake) + licenseKey (dari config) + gameId
+- Client: luaCode = XOR(base64decode(payload), derivedKey)
+
+Derived key tidak pernah dikirim secara eksplisit. Client harus compute sendiri dari komponen yang sudah dimiliki.
+
+### 10.7 Enforcement Phases
+
+| Phase | Delay | Behavior |
+|---|---|---|
+| 1 | Menit 0-5 | Silent: spawn invisible parts setiap detik (gradual memory leak) |
+| 2 | Menit 5-10 | Subtle: random GUI notification muncul sesekali ("Unlicensed software detected") |
+| 3 | Menit 10-15 | Obvious: game makin berat + notification lebih sering + pesan "pirated scripts" |
+| 4 | Menit 15-20 | Aggressive: full screen overlay merah + looping annoying sound + pesan beli license |
+| 5 | Menit 20+ | Fatal: mass spawn parts (50/frame) + kick semua player setelah 10 detik |
+
+### 10.8 SignKey Generation
+
+SignKey di-generate menggunakan HMAC-SHA256 dengan time-bucketing:
+
+- Input: licenseKey + gameId + timeBucket + serverSecret
+- timeBucket = Math.floor(Date.now() / (300 * 1000)) — berubah setiap 5 menit
+- Output: 32 karakter hex string
+- Deterministic: input yang sama dalam window 5 menit yang sama menghasilkan signKey yang sama
+
+### 10.9 Security Layers
+
+| Layer | Lokasi | Fungsi |
+|---|---|---|
+| AssetId obfuscation | .rbxm file (buyer) | Sembunyikan asset ID dari inspection |
+| Roblox Asset | Roblox CDN (developer) | Logic handshake + heartbeat + enforce call |
+| Server verification | Backend API | Validasi license, generate signKey, serve enforce code |
+| Derived encryption | Both sides | Encrypt payload, key tidak pernah transit langsung |
+| Obfuscated loader | .rbxm file (buyer) | Sembunyikan loadstring + decrypt logic |
+| Gradual enforcement | Runtime (game) | Breaking behavior yang escalate, sulit di-trace |
+
+### 10.10 Anti-Bypass Measures
+
+| Attack Vector | Mitigation |
+|---|---|
+| Hapus loader script | Core module depend pada helpers dari asset — crash |
+| Replace require(assetId) dengan dummy | Tidak tahu expected return shape — mechanic broken |
+| Hardcode signKey | Rotate setiap 5 menit — expired |
+| Intercept network response | Payload encrypted, key derived (tidak di-send) |
+| Deobfuscate loader | Effort tinggi, dan logic tersebar di banyak titik |
+| Block HTTP requests | Handshake gagal — enforcement trigger |
+| Hapus enforcement code | Code di-fetch dari server, tidak ada di file lokal |
+
+### 10.11 Admin Control
+
+Admin dapat melalui dashboard:
+- Melihat semua license yang aktif (last verified < 5 menit)
+- Melihat game ID dan game name per license
+- Revoke/suspend license (heartbeat berikutnya akan trigger enforcement)
+- Melihat history verification attempts (IP, timestamp, success/fail)
+
+---
+
+*Bagian ini merupakan tambahan dari dokumentasi teknis utama.*
+*Terakhir diperbarui: 17 Mei 2026*
