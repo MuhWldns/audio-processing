@@ -5,7 +5,7 @@
 
 */
 -- AlterTable
-ALTER TABLE `user` ADD COLUMN `freeAudioDailyLimit` INTEGER NOT NULL DEFAULT 3,
+ALTER TABLE `User` ADD COLUMN `freeAudioDailyLimit` INTEGER NOT NULL DEFAULT 3,
     ADD COLUMN `freeAudioDateKey` VARCHAR(10) NULL,
     ADD COLUMN `freeAudioUsedToday` INTEGER NOT NULL DEFAULT 0,
     ADD COLUMN `fullName` VARCHAR(191) NULL,
