@@ -5,8 +5,32 @@ import { ToastProvider } from '@/components/ui/Toast'
 import Header from '@/components/Header'
 
 export const metadata: Metadata = {
-  title: 'RBX Royale - Scripts & Audio Tools',
-  description: 'Premium licensed Roblox scripts and browser-based audio processing tools for game developers.',
+  title: {
+    default: 'RBX Royale - Scripts & Audio Tools',
+    template: '%s | RBX Royale',
+  },
+  description: 'Premium licensed Roblox scripts and browser-based audio processing tools for game developers. Browse, purchase, and manage scripts with built-in license verification.',
+  keywords: ['roblox', 'scripts', 'roblox scripts', 'game development', 'audio processing', 'rbx royale', 'lua scripts', 'roblox store'],
+  authors: [{ name: 'RBX Royale' }],
+  creator: 'RBX Royale',
+  metadataBase: new URL('https://audio.muhwldns.me'),
+  openGraph: {
+    type: 'website',
+    locale: 'id_ID',
+    url: 'https://audio.muhwldns.me',
+    siteName: 'RBX Royale',
+    title: 'RBX Royale - Scripts & Audio Tools',
+    description: 'Premium licensed Roblox scripts and audio processing tools for game developers.',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'RBX Royale - Scripts & Audio Tools',
+    description: 'Premium licensed Roblox scripts and audio processing tools for game developers.',
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 }
 
 export default function RootLayout({
