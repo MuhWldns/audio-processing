@@ -175,6 +175,7 @@ app.use(
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
       maxAge: DEFAULT_SESSION_MAX_AGE,
+      domain: process.env.COOKIE_DOMAIN || undefined,
     },
   }),
 );
