@@ -33,7 +33,6 @@ cd frontend
 npm install --frozen-lockfile
 
 echo -e "${GREEN}[5/7] Building frontend...${NC}"
-cp .env.production .env.local
 npm run build
 cd ..
 

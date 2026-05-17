@@ -124,13 +124,8 @@ main() {
 
   # 1. Dump database
   log "Dumping database..."
-  local dump_cmd="mysqldump --single-transaction --routines --triggers --host=${DB_HOST} --port=${DB_PORT} --user=${DB_USER}"
-  
-  if [ -n "${DB_PASS:-}" ]; then
-    dump_cmd="${dump_cmd} --password=${DB_PASS}"
-  fi
 
-  if ! ${dump_cmd} "$DB_NAME" | gzip > "$filepath"; then
+  if ! docker exec mysql-server mysqldump --single-transaction --routines --triggers -u ${DB_USER} "$DB_NAME" | gzip > "$filepath"; then
     local err="mysqldump failed"
     log "ERROR: ${err}"
     notify_failure "$err"
