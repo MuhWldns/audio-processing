@@ -1,44 +1,173 @@
--- AlterTable
-ALTER TABLE `user` ADD COLUMN `totalSpentRupiah` INTEGER NOT NULL DEFAULT 0,
-    ADD COLUMN `totalTopUpRupiah` INTEGER NOT NULL DEFAULT 0,
-    ADD COLUMN `walletBalanceRupiah` INTEGER NOT NULL DEFAULT 0;
-
 -- CreateTable
-CREATE TABLE `TopUpTransaction` (
+CREATE TABLE `User` (
     `id` VARCHAR(191) NOT NULL,
-    `userId` VARCHAR(191) NOT NULL,
-    `amountRupiah` INTEGER NOT NULL,
-    `paymentGateway` VARCHAR(64) NOT NULL,
-    `paymentId` VARCHAR(191) NULL,
-    `status` VARCHAR(32) NOT NULL DEFAULT 'pending',
-    `metadata` JSON NULL,
+    `username` VARCHAR(191) NULL,
+    `fullName` VARCHAR(191) NULL,
+    `email` VARCHAR(191) NULL,
+    `displayName` VARCHAR(191) NULL,
+    `avatarUrl` VARCHAR(512) NULL,
+    `role` ENUM('USER', 'ADMIN') NOT NULL DEFAULT 'USER',
+    `isEmailVerified` BOOLEAN NOT NULL DEFAULT false,
+    `lastLoginAt` DATETIME(3) NULL,
+    `lastLoginProvider` ENUM('GOOGLE', 'DISCORD') NULL,
+    `freeAudioDateKey` VARCHAR(10) NULL,
+    `freeAudioUsedToday` INTEGER NOT NULL DEFAULT 0,
+    `freeAudioDailyLimit` INTEGER NOT NULL DEFAULT 3,
+    `paidAudioCost` INTEGER NOT NULL DEFAULT 2000,
+    `walletBalance` INTEGER NOT NULL DEFAULT 0,
+    `totalTopUp` INTEGER NOT NULL DEFAULT 0,
+    `totalSpent` INTEGER NOT NULL DEFAULT 0,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
-    UNIQUE INDEX `TopUpTransaction_paymentId_key`(`paymentId`),
-    INDEX `TopUpTransaction_userId_idx`(`userId`),
-    INDEX `TopUpTransaction_status_idx`(`status`),
-    INDEX `TopUpTransaction_paymentGateway_idx`(`paymentGateway`),
-    INDEX `TopUpTransaction_createdAt_idx`(`createdAt`),
+    UNIQUE INDEX `User_username_key`(`username`),
+    UNIQUE INDEX `User_email_key`(`email`),
+    INDEX `User_email_idx`(`email`),
+    INDEX `User_username_idx`(`username`),
+    INDEX `User_lastLoginAt_idx`(`lastLoginAt`),
+    INDEX `User_walletBalance_idx`(`walletBalance`),
+    INDEX `User_totalSpent_idx`(`totalSpent`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `ServiceTransaction` (
+CREATE TABLE `OAuthAccount` (
     `id` VARCHAR(191) NOT NULL,
     `userId` VARCHAR(191) NOT NULL,
-    `amountRupiah` INTEGER NOT NULL,
-    `durationSeconds` INTEGER NOT NULL,
-    `processingType` VARCHAR(32) NOT NULL DEFAULT 'basic',
-    `serviceType` VARCHAR(32) NOT NULL DEFAULT 'audio_processing',
-    `status` VARCHAR(32) NOT NULL DEFAULT 'pending',
+    `provider` ENUM('GOOGLE', 'DISCORD') NOT NULL,
+    `providerAccountId` VARCHAR(191) NOT NULL,
+    `accessToken` TEXT NULL,
+    `refreshToken` TEXT NULL,
+    `expiresAt` DATETIME(3) NULL,
+    `scope` VARCHAR(512) NULL,
+    `tokenType` VARCHAR(64) NULL,
+    `idToken` TEXT NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    INDEX `OAuthAccount_userId_idx`(`userId`),
+    UNIQUE INDEX `OAuthAccount_provider_providerAccountId_key`(`provider`, `providerAccountId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Session` (
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
+    `sessionToken` VARCHAR(191) NOT NULL,
+    `expiresAt` DATETIME(3) NOT NULL,
+    `ipAddress` VARCHAR(64) NULL,
+    `userAgent` VARCHAR(512) NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `Session_sessionToken_key`(`sessionToken`),
+    INDEX `Session_userId_idx`(`userId`),
+    INDEX `Session_expiresAt_idx`(`expiresAt`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `WalletTransaction` (
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
+    `type` ENUM('TOP_UP', 'PURCHASE', 'AUDIO_CHARGE', 'REFUND', 'ADJUSTMENT') NOT NULL,
+    `amount` INTEGER NOT NULL,
+    `balanceAfter` INTEGER NOT NULL,
+    `referenceType` VARCHAR(64) NULL,
+    `referenceId` VARCHAR(191) NULL,
+    `description` VARCHAR(512) NULL,
     `metadata` JSON NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
-    INDEX `ServiceTransaction_userId_idx`(`userId`),
-    INDEX `ServiceTransaction_status_idx`(`status`),
-    INDEX `ServiceTransaction_serviceType_idx`(`serviceType`),
-    INDEX `ServiceTransaction_createdAt_idx`(`createdAt`),
+    INDEX `WalletTransaction_userId_idx`(`userId`),
+    INDEX `WalletTransaction_type_idx`(`type`),
+    INDEX `WalletTransaction_referenceType_referenceId_idx`(`referenceType`, `referenceId`),
+    INDEX `WalletTransaction_createdAt_idx`(`createdAt`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `TopUpOrder` (
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
+    `provider` VARCHAR(64) NOT NULL,
+    `externalId` VARCHAR(191) NULL,
+    `amountRupiah` INTEGER NOT NULL,
+    `finalAmount` INTEGER NULL,
+    `status` ENUM('PENDING', 'COMPLETED', 'FAILED', 'CANCELED') NOT NULL DEFAULT 'PENDING',
+    `activityLogId` VARCHAR(191) NULL,
+    `metadata` JSON NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `TopUpOrder_externalId_key`(`externalId`),
+    UNIQUE INDEX `TopUpOrder_activityLogId_key`(`activityLogId`),
+    INDEX `TopUpOrder_userId_idx`(`userId`),
+    INDEX `TopUpOrder_status_idx`(`status`),
+    INDEX `TopUpOrder_provider_idx`(`provider`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `UsageEvent` (
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
+    `status` ENUM('PENDING', 'COMPLETED', 'FAILED', 'CANCELED') NOT NULL DEFAULT 'PENDING',
+    `audioDurationSec` INTEGER NOT NULL,
+    `exportFormat` VARCHAR(32) NOT NULL,
+    `costRupiah` INTEGER NOT NULL,
+    `metadata` JSON NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+    `completedAt` DATETIME(3) NULL,
+
+    INDEX `UsageEvent_userId_idx`(`userId`),
+    INDEX `UsageEvent_status_idx`(`status`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `ActivityLog` (
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
+    `type` ENUM('LOGIN', 'LOGOUT', 'TOP_UP', 'TOKEN_USAGE', 'AUDIO_EXPORT', 'AUDIO_UPLOAD', 'FAILED_ACTION', 'REFUND', 'ROLLBACK') NOT NULL,
+    `status` ENUM('INFO', 'SUCCESS', 'PENDING', 'FAILED') NOT NULL DEFAULT 'INFO',
+    `title` VARCHAR(191) NOT NULL,
+    `description` VARCHAR(512) NULL,
+    `amountRupiah` INTEGER NULL,
+    `fileName` VARCHAR(255) NULL,
+    `fileFormat` VARCHAR(32) NULL,
+    `metadata` JSON NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `ActivityLog_userId_idx`(`userId`),
+    INDEX `ActivityLog_type_idx`(`type`),
+    INDEX `ActivityLog_status_idx`(`status`),
+    INDEX `ActivityLog_createdAt_idx`(`createdAt`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `UploadRecord` (
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
+    `fileName` VARCHAR(255) NOT NULL,
+    `source` VARCHAR(64) NULL,
+    `fileFormat` VARCHAR(32) NOT NULL,
+    `durationSec` INTEGER NULL,
+    `speedFactor` DECIMAL(6, 2) NULL,
+    `amplification` DECIMAL(6, 2) NULL,
+    `status` ENUM('PENDING', 'COMPLETED', 'FAILED', 'CANCELED') NOT NULL DEFAULT 'PENDING',
+    `activityLogId` VARCHAR(191) NULL,
+    `metadata` JSON NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `UploadRecord_activityLogId_key`(`activityLogId`),
+    INDEX `UploadRecord_userId_idx`(`userId`),
+    INDEX `UploadRecord_status_idx`(`status`),
+    INDEX `UploadRecord_fileFormat_idx`(`fileFormat`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -220,17 +349,32 @@ CREATE TABLE `CartItem` (
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- CreateIndex
-CREATE INDEX `User_walletBalanceRupiah_idx` ON `User`(`walletBalanceRupiah`);
-
--- CreateIndex
-CREATE INDEX `User_totalSpentRupiah_idx` ON `User`(`totalSpentRupiah`);
+-- AddForeignKey
+ALTER TABLE `OAuthAccount` ADD CONSTRAINT `OAuthAccount_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `TopUpTransaction` ADD CONSTRAINT `TopUpTransaction_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `Session` ADD CONSTRAINT `Session_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `ServiceTransaction` ADD CONSTRAINT `ServiceTransaction_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `WalletTransaction` ADD CONSTRAINT `WalletTransaction_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `TopUpOrder` ADD CONSTRAINT `TopUpOrder_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `TopUpOrder` ADD CONSTRAINT `TopUpOrder_activityLogId_fkey` FOREIGN KEY (`activityLogId`) REFERENCES `ActivityLog`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `UsageEvent` ADD CONSTRAINT `UsageEvent_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `ActivityLog` ADD CONSTRAINT `ActivityLog_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `UploadRecord` ADD CONSTRAINT `UploadRecord_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `UploadRecord` ADD CONSTRAINT `UploadRecord_activityLogId_fkey` FOREIGN KEY (`activityLogId`) REFERENCES `ActivityLog`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Product` ADD CONSTRAINT `Product_categoryId_fkey` FOREIGN KEY (`categoryId`) REFERENCES `ProductCategory`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
