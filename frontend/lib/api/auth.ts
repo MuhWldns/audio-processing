@@ -8,6 +8,7 @@ export type AuthUser = {
   lastLoginAt: string | null;
   lastLoginProvider: "GOOGLE" | "DISCORD" | null;
   role: "USER" | "ADMIN";
+  robloxUserId: string | null;
   // Wallet (single source of truth, in Rupiah)
   walletBalance: number;
   totalTopUp: number;

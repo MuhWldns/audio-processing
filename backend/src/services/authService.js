@@ -404,6 +404,7 @@ export async function buildMePayload(userId) {
     lastLoginAt: toIsoStringOrNull(user.lastLoginAt),
     lastLoginProvider: user.lastLoginProvider,
     role: user.role,
+    robloxUserId: user.robloxUserId || null,
     walletBalance: user.walletBalance,
     totalTopUp: user.totalTopUp,
     totalSpent: user.totalSpent,
