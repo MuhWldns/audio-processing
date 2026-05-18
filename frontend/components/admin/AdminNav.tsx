@@ -9,6 +9,7 @@ const adminLinks = [
   { href: '/admin/categories', label: 'Categories' },
   { href: '/admin/licenses', label: 'Licenses' },
   { href: '/admin/enforcement', label: 'Enforcement' },
+  { href: '/admin/users', label: 'Users' },
 ];
 
 export default function AdminNav() {

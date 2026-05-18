@@ -73,6 +73,10 @@ import {
   handleAdminActiveLicenses,
   handleAdminLicenseLogs,
   handleAdminKillSwitch,
+  handleGetUserTransactions,
+  handleAdminListUsers,
+  handleAdminChangeUserRole,
+  handleAdminAdjustUserBalance,
   handleLicenseHandshake,
   handleLicenseHeartbeat,
   handleLicenseEnforce,
@@ -207,6 +211,9 @@ app.post("/upload", requireAuth, uploadLimiter, validateApiKey(apiKey), upload.s
 app.get("/history", requireAuth, handleGetHistory);
 app.get("/history/:id/download", requireAuth, handleDownloadHistory);
 
+// User routes (protected)
+app.get("/user/transactions", requireAuth, handleGetUserTransactions);
+
 // Top up routes
 app.post("/topup/create", requireAuth, topupLimiter, validate(createTopUpSchema), handleCreateTopUp);
 app.get("/topup/status/:reference", requireAuth, handleGetTopUpStatus);
@@ -280,6 +287,11 @@ app.post("/admin/licenses/:id/kill", requireAuth, requireAdmin, handleAdminKillS
 
 // Admin - Analytics
 app.get("/admin/analytics", requireAuth, requireAdmin, handleAdminAnalytics);
+
+// Admin - Users
+app.get("/admin/users", requireAuth, requireAdmin, handleAdminListUsers);
+app.put("/admin/users/:id/role", requireAuth, requireAdmin, handleAdminChangeUserRole);
+app.post("/admin/users/:id/adjust-balance", requireAuth, requireAdmin, handleAdminAdjustUserBalance);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
