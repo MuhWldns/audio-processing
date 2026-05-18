@@ -8,6 +8,7 @@
 
 import { prisma } from "../prisma.js";
 import { getPresignedDownloadUrl } from "../services/storageService.js";
+import { verifyPlaceOwnership } from "../services/robloxOwnershipService.js";
 
 /**
  * GET /licenses - Get user's licenses
@@ -98,6 +99,7 @@ export const handleGetLicenseDetail = async (req, res) => {
 
 /**
  * POST /licenses/:id/whitelist - Add game to whitelist
+ * Validates ownership via Roblox API before allowing whitelist
  */
 export const handleAddGameToWhitelist = async (req, res) => {
   const userId = req.user.id;
@@ -110,8 +112,18 @@ export const handleAddGameToWhitelist = async (req, res) => {
 
   // Validate gameId format (Roblox placeId is numeric)
   const gameIdStr = String(gameId).trim();
-  if (!gameIdStr || gameIdStr.length > 64) {
-    return res.status(400).json({ error: "Invalid gameId format" });
+  if (!gameIdStr || !/^\d+$/.test(gameIdStr)) {
+    return res.status(400).json({ error: "gameId must be a numeric Roblox Place ID" });
+  }
+
+  // Check user has robloxUserId set
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { robloxUserId: true },
+  });
+
+  if (!user || !user.robloxUserId) {
+    return res.status(400).json({ error: "Please set your Roblox User ID in profile first" });
   }
 
   const license = await prisma.license.findFirst({
@@ -146,10 +158,32 @@ export const handleAddGameToWhitelist = async (req, res) => {
     if (existing.active) {
       return res.status(409).json({ error: "Game already whitelisted" });
     }
-    // Re-activate
+    // Re-activate (re-verify ownership)
+  }
+
+  // Verify ownership via Roblox API
+  const ownership = await verifyPlaceOwnership(gameIdStr, user.robloxUserId);
+
+  if (!ownership.valid) {
+    return res.status(403).json({
+      error: "Ownership verification failed",
+      reason: ownership.reason,
+      detail: ownership.detail,
+    });
+  }
+
+  // Create or re-activate whitelist entry with creator metadata
+  if (existing) {
     const updated = await prisma.gameWhitelist.update({
       where: { id: existing.id },
-      data: { active: true, gameName: gameName || existing.gameName },
+      data: {
+        active: true,
+        gameName: ownership.gameName || gameName || existing.gameName,
+        universeId: ownership.universeId,
+        creatorId: ownership.creatorId,
+        creatorType: ownership.creatorType,
+        verifiedAt: new Date(),
+      },
     });
     return res.status(200).json({ ok: true, game: updated, reactivated: true });
   }
@@ -158,7 +192,11 @@ export const handleAddGameToWhitelist = async (req, res) => {
     data: {
       licenseId: id,
       gameId: gameIdStr,
-      gameName: gameName || null,
+      gameName: ownership.gameName || gameName || null,
+      universeId: ownership.universeId,
+      creatorId: ownership.creatorId,
+      creatorType: ownership.creatorType,
+      verifiedAt: new Date(),
     },
   });
 

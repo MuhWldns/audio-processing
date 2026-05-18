@@ -77,6 +77,7 @@ import {
   handleAdminListUsers,
   handleAdminChangeUserRole,
   handleAdminAdjustUserBalance,
+  handleSetRobloxUserId,
   handleLicenseHandshake,
   handleLicenseHeartbeat,
   handleLicenseEnforce,
@@ -213,6 +214,7 @@ app.get("/history/:id/download", requireAuth, handleDownloadHistory);
 
 // User routes (protected)
 app.get("/user/transactions", requireAuth, handleGetUserTransactions);
+app.put("/user/roblox-id", requireAuth, handleSetRobloxUserId);
 
 // Top up routes
 app.post("/topup/create", requireAuth, topupLimiter, validate(createTopUpSchema), handleCreateTopUp);

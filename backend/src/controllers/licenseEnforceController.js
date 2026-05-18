@@ -105,7 +105,7 @@ async function logVerification(licenseId, gameId, ipAddress, userAgent, success,
  * Initial verification + return signKey + session token
  */
 export const handleLicenseHandshake = async (req, res) => {
-  const { licenseKey, gameId, gameName } = req.body;
+  const { licenseKey, gameId, gameName, creatorId, creatorType } = req.body;
   const ipAddress = req.ip || req.headers["x-forwarded-for"] || null;
   const userAgent = req.headers["user-agent"] || null;
 
@@ -119,6 +119,15 @@ export const handleLicenseHandshake = async (req, res) => {
   if (!result.valid) {
     await logVerification(null, gameIdStr, ipAddress, userAgent, false, result.reason);
     return res.status(200).json({ valid: false, reason: result.reason });
+  }
+
+  // Validate creator against whitelist metadata (if provided by client)
+  if (creatorId && result.license.gameWhitelist[0]) {
+    const wl = result.license.gameWhitelist[0];
+    if (wl.creatorId && String(creatorId) !== wl.creatorId) {
+      await logVerification(result.license.id, gameIdStr, ipAddress, userAgent, false, "creator_mismatch");
+      return res.status(200).json({ valid: false, reason: "creator_mismatch" });
+    }
   }
 
   // Generate signKey and session token
@@ -171,7 +180,7 @@ export const handleLicenseHandshake = async (req, res) => {
  * Periodic re-verification + signKey rotation
  */
 export const handleLicenseHeartbeat = async (req, res) => {
-  const { licenseKey, gameId, sessionToken } = req.body;
+  const { licenseKey, gameId, sessionToken, creatorId } = req.body;
   const ipAddress = req.ip || req.headers["x-forwarded-for"] || null;
   const userAgent = req.headers["user-agent"] || null;
 
@@ -192,6 +201,15 @@ export const handleLicenseHeartbeat = async (req, res) => {
   if (storedToken && storedToken !== sessionToken) {
     await logVerification(result.license.id, gameIdStr, ipAddress, userAgent, false, "invalid_session");
     return res.status(200).json({ valid: false, reason: "invalid_session" });
+  }
+
+  // Validate creator consistency (if provided)
+  if (creatorId && result.license.gameWhitelist[0]) {
+    const wl = result.license.gameWhitelist[0];
+    if (wl.creatorId && String(creatorId) !== wl.creatorId) {
+      await logVerification(result.license.id, gameIdStr, ipAddress, userAgent, false, "creator_mismatch");
+      return res.status(200).json({ valid: false, reason: "creator_mismatch" });
+    }
   }
 
   // Generate new rotated signKey

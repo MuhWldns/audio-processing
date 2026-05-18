@@ -1,8 +1,9 @@
 /**
- * Controller untuk user-facing endpoints (transactions, wallet)
+ * Controller untuk user-facing endpoints (transactions, wallet, roblox binding)
  */
 
 import { prisma } from "../prisma.js";
+import { validateRobloxUser } from "../services/robloxOwnershipService.js";
 
 /**
  * GET /user/transactions - Get user's wallet transaction history
@@ -236,4 +237,50 @@ export const handleAdminAdjustUserBalance = async (req, res) => {
       newBalance: result.walletBalance,
     },
   });
+};
+
+// ==================== ROBLOX ID BINDING ====================
+
+/**
+ * PUT /user/roblox-id - Set/update Roblox User ID
+ * Validates user exists via Roblox API
+ */
+export const handleSetRobloxUserId = async (req, res) => {
+  const userId = req.user.id;
+  const { robloxUserId } = req.body;
+
+  if (!robloxUserId) {
+    return res.status(400).json({ error: "robloxUserId is required" });
+  }
+
+  const robloxIdStr = String(robloxUserId).trim();
+
+  // Validate format (numeric)
+  if (!/^\d+$/.test(robloxIdStr)) {
+    return res.status(400).json({ error: "Roblox User ID must be numeric" });
+  }
+
+  // Validate user exists via Roblox API
+  try {
+    const robloxUser = await validateRobloxUser(robloxIdStr);
+    if (!robloxUser) {
+      return res.status(404).json({ error: "Roblox User ID not found. Please check your ID." });
+    }
+
+    // Save
+    await prisma.user.update({
+      where: { id: userId },
+      data: { robloxUserId: robloxIdStr },
+    });
+
+    return res.status(200).json({
+      ok: true,
+      robloxUserId: robloxIdStr,
+      robloxUsername: robloxUser.name,
+      robloxDisplayName: robloxUser.displayName,
+    });
+  } catch (err) {
+    console.error("[user] Roblox API error:", err.message);
+    return res.status(502).json({ error: "Failed to validate Roblox User ID. Please try again later." });
+  }
 };

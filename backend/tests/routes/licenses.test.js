@@ -2,7 +2,7 @@
  * Tests for License management routes
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import request from "supertest";
 import { createTestApp, mockUser, mockLicense } from "../helpers/testApp.js";
 import { prisma } from "../../src/prisma.js";
@@ -12,6 +12,18 @@ import {
   handleAddGameToWhitelist,
   handleRemoveGameFromWhitelist,
 } from "../../src/controllers/licenseController.js";
+
+// Mock roblox ownership service
+vi.mock("../../src/services/robloxOwnershipService.js", () => ({
+  verifyPlaceOwnership: vi.fn().mockResolvedValue({
+    valid: true,
+    universeId: "111111",
+    creatorId: "123456789",
+    creatorType: "User",
+    gameName: "Test Game",
+  }),
+  validateRobloxUser: vi.fn().mockResolvedValue({ id: "123456789", name: "TestUser", displayName: "Test" }),
+}));
 
 function buildApp(user = mockUser) {
   return createTestApp((app, { requireAuth }) => {
@@ -105,6 +117,7 @@ describe("License Management Routes", () => {
     });
 
     it("should return 404 if license not found", async () => {
+      prisma.user.findUnique.mockResolvedValue({ robloxUserId: "123456789" });
       prisma.license.findFirst.mockResolvedValue(null);
 
       const app = buildApp();
@@ -113,6 +126,7 @@ describe("License Management Routes", () => {
     });
 
     it("should return 403 if max games reached", async () => {
+      prisma.user.findUnique.mockResolvedValue({ robloxUserId: "123456789" });
       prisma.license.findFirst.mockResolvedValue({
         ...mockLicense,
         maxGames: 3,
@@ -126,6 +140,7 @@ describe("License Management Routes", () => {
     });
 
     it("should add game to whitelist", async () => {
+      prisma.user.findUnique.mockResolvedValue({ robloxUserId: "123456789" });
       prisma.license.findFirst.mockResolvedValue({
         ...mockLicense,
         maxGames: 3,
@@ -136,7 +151,7 @@ describe("License Management Routes", () => {
         id: "gw-new",
         licenseId: "license-test-123",
         gameId: "123456",
-        gameName: "My Game",
+        gameName: "Test Game",
         active: true,
         addedAt: new Date(),
       });
@@ -153,6 +168,7 @@ describe("License Management Routes", () => {
     });
 
     it("should return 409 if already whitelisted", async () => {
+      prisma.user.findUnique.mockResolvedValue({ robloxUserId: "123456789" });
       prisma.license.findFirst.mockResolvedValue({
         ...mockLicense,
         maxGames: 3,

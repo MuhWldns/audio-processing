@@ -60,6 +60,7 @@ model User {
   avatarUrl      String?           @db.VarChar(512)
   role           UserRole          @default(USER)
   isEmailVerified Boolean          @default(false)
+  robloxUserId   String?           @db.VarChar(64)
   lastLoginAt    DateTime?
   lastLoginProvider AuthProvider?
   // Audio free quota
@@ -367,9 +368,13 @@ model License {
 model GameWhitelist {
   id          String   @id @default(cuid())
   licenseId   String
-  gameId      String   @db.VarChar(64) // Roblox placeId or universeId
+  gameId      String   @db.VarChar(64) // Roblox placeId
+  universeId  String?  @db.VarChar(64) // Resolved from Roblox API
+  creatorId   String?  @db.VarChar(64) // Creator (User ID or Group ID)
+  creatorType String?  @db.VarChar(16) // "User" or "Group"
   gameName    String?  @db.VarChar(191)
   active      Boolean  @default(true)
+  verifiedAt  DateTime? // When ownership was verified via Roblox API
   addedAt     DateTime @default(now())
 
   license     License  @relation(fields: [licenseId], references: [id], onDelete: Cascade)

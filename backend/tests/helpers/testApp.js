@@ -68,6 +68,7 @@ export const mockUser = {
   lastLoginAt: new Date().toISOString(),
   lastLoginProvider: "GOOGLE",
   role: "USER",
+  robloxUserId: "123456789",
   walletBalance: 100000,
   totalTopUp: 200000,
   totalSpent: 100000,
