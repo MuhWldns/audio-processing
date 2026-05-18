@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
 import { type CheckoutResult } from '@/lib/api/cart';
+import Invoice from '@/components/Invoice';
 
 const formatRupiah = (value: number) =>
   new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(value);
@@ -12,6 +13,7 @@ export default function CheckoutSuccessPage() {
   const { user } = useAuth();
   const [result, setResult] = useState<CheckoutResult | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [showInvoice, setShowInvoice] = useState(false);
 
   useEffect(() => {
     const stored = sessionStorage.getItem('checkout_result');
@@ -161,6 +163,12 @@ export default function CheckoutSuccessPage() {
         >
           Lihat Semua Licenses
         </Link>
+        <button
+          onClick={() => setShowInvoice(true)}
+          className="rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-slate-100 transition hover:border-violet-300/30 hover:bg-violet-500/10"
+        >
+          View Invoice
+        </button>
         <Link
           href="/store"
           className="rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-slate-100 transition hover:border-violet-300/30 hover:bg-violet-500/10"
@@ -168,6 +176,31 @@ export default function CheckoutSuccessPage() {
           Kembali ke Store
         </Link>
       </div>
+
+      {/* Invoice modal */}
+      {showInvoice && result && (
+        <Invoice
+          data={{
+            invoiceId: `INV-${result.purchases[0]?.id?.slice(0, 8) || 'unknown'}`,
+            date: new Date().toISOString(),
+            buyer: {
+              name: user?.displayName || user?.fullName || 'User',
+              email: user?.email || '-',
+              accountId: user?.id || '-',
+            },
+            items: result.licenses.map((license, i) => ({
+              productName: `Product ${i + 1}`,
+              licenseType: license.licenseType,
+              licenseKey: license.licenseKey,
+              maxGames: license.maxGames,
+              amount: result.purchases[i]?.amountRupiah || 0,
+            })),
+            totalCharged: result.totalCharged,
+            paymentMethod: 'Wallet Balance (QRIS Top-Up)',
+          }}
+          onClose={() => setShowInvoice(false)}
+        />
+      )}
     </div>
   );
 }
