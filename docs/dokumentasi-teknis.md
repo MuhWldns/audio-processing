@@ -999,3 +999,82 @@ Admin dapat melalui dashboard:
 
 *Bagian ini merupakan tambahan dari dokumentasi teknis utama.*
 *Terakhir diperbarui: 17 Mei 2026*
+
+---
+
+## 11. Halaman Tambahan (Update Mei 2026)
+
+### 11.1 Dashboard - Wallet (/dashboard/wallet)
+
+Halaman manajemen saldo wallet pengguna. Menampilkan:
+- Saldo saat ini (prominent)
+- Statistik: total top-up, total pengeluaran, free audio hari ini
+- 5 transaksi terakhir
+- Quick link ke top-up dan store
+
+### 11.2 Dashboard - Transaction History (/dashboard/transactions)
+
+Riwayat lengkap semua transaksi wallet pengguna. Fitur:
+- Filter berdasarkan tipe: TOP_UP, PURCHASE, AUDIO_CHARGE, REFUND, ADJUSTMENT
+- Pagination (20 per halaman)
+- Setiap entry menampilkan: tipe, deskripsi, jumlah (+/-), saldo setelah transaksi, tanggal
+
+### 11.3 Admin - User Management (/admin/users)
+
+Halaman admin untuk mengelola semua pengguna platform. Fitur:
+- Daftar semua users (paginated, max 50 per halaman)
+- Search berdasarkan nama atau email
+- Filter berdasarkan role (ALL, USER, ADMIN)
+- Statistik: total users, jumlah admin, total saldo platform
+- Actions per user:
+  - Promote/Demote role (dengan confirm dialog, tidak bisa demote diri sendiri)
+  - Adjust balance (tambah/kurangi saldo dengan reason wajib)
+
+### 11.4 Admin - License Enforcement (/admin/enforcement)
+
+Dashboard real-time untuk monitoring dan enforcement lisensi. Fitur:
+- Active sessions (license yang verified dalam 5 menit terakhir, auto-refresh 30 detik)
+- Statistik: active count, unique games, unique users
+- Kill switch per license (suspend + trigger enforcement pada heartbeat berikutnya)
+- Verification logs modal per license (history attempts dengan IP, timestamp, result)
+
+### 11.5 Invoice (Checkout Success)
+
+Komponen invoice yang muncul setelah pembelian berhasil. Fitur:
+- Modal overlay dengan tema putih (formal, printable)
+- Data: invoice ID, tanggal, buyer info, items, license keys, total, payment method
+- Instruksi instalasi
+- Tombol Print / Save PDF (via window.print())
+
+---
+
+## 12. API Endpoints Tambahan (Update Mei 2026)
+
+### 12.1 User Endpoints
+
+| Method | Path | Auth | Deskripsi |
+|---|---|---|---|
+| GET | /user/transactions | Login | Riwayat transaksi wallet (paginated, filterable by type) |
+
+### 12.2 Admin Endpoints Tambahan
+
+| Method | Path | Auth | Deskripsi |
+|---|---|---|---|
+| GET | /admin/users | Admin | Daftar semua users (search, filter role, paginated) |
+| PUT | /admin/users/:id/role | Admin | Ubah role user (USER/ADMIN, tidak bisa demote diri sendiri) |
+| POST | /admin/users/:id/adjust-balance | Admin | Adjust saldo wallet (amount + reason wajib) |
+| GET | /admin/licenses/active | Admin | License yang aktif saat ini (verified < 5 menit) |
+| GET | /admin/licenses/:id/logs | Admin | Verification logs per license (paginated) |
+| POST | /admin/licenses/:id/kill | Admin | Kill switch (suspend license, trigger enforcement) |
+
+### 12.3 License Enforcement Endpoints
+
+| Method | Path | Rate Limit | Deskripsi |
+|---|---|---|---|
+| POST | /api/license/handshake | 10 req/menit | Verifikasi awal + return signKey + session token |
+| POST | /api/license/heartbeat | 15 req/menit | Periodic recheck + rotasi signKey (setiap 5 menit) |
+| POST | /api/license/enforce | 5 req/menit | Return encrypted breaking code per phase |
+
+---
+
+*Terakhir diperbarui: 18 Mei 2026*
