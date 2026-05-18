@@ -37,8 +37,8 @@
   "plugin": ["superpowers@git+https://github.com/obra/superpowers.git"],
   "mcp": {
     "Roblox_Studio": {
-      "command": "cmd.exe",
-      "args": ["/c", "%LOCALAPPDATA%\\Roblox\\mcp.bat"],
+      "type": "local",
+      "command": ["cmd.exe", "/c", "%LOCALAPPDATA%\\Roblox\\mcp.bat"],
       "enabled": true
     }
   }
