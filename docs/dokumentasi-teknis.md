@@ -1078,3 +1078,152 @@ Komponen invoice yang muncul setelah pembelian berhasil. Fitur:
 ---
 
 *Terakhir diperbarui: 18 Mei 2026*
+
+---
+
+## 13. Roblox Owner Verification
+
+### 13.1 Overview
+
+Sistem verifikasi kepemilikan game Roblox memastikan bahwa hanya pemilik game yang sah yang dapat menggunakan license. Buyer wajib mendaftarkan Roblox User ID di profile, dan saat whitelist game, server memvalidasi kepemilikan via Roblox API.
+
+### 13.2 Roblox User ID Binding
+
+Setiap user platform wajib mendaftarkan Roblox User ID mereka sebelum dapat melakukan whitelist game. Field User.robloxUserId menyimpan ID ini.
+
+Endpoint: PUT /user/roblox-id
+- Validasi format (numeric)
+- Validasi user exists via Roblox API (GET https://users.roblox.com/v1/users/{id})
+- Simpan ke database
+
+### 13.3 Ownership Validation saat Whitelist
+
+Saat buyer whitelist game (POST /licenses/:id/whitelist), server melakukan:
+
+1. Resolve placeId ke universeId:
+   GET https://apis.roblox.com/universes/v1/places/{placeId}/universe
+
+2. Resolve universe ke creator:
+   GET https://games.roblox.com/v1/games?universeIds={universeId}
+   Mendapat: creator.id, creator.type (User/Group)
+
+3. Validasi ownership:
+   - Jika creatorType = User: creatorId harus sama dengan uyer.robloxUserId
+   - Jika creatorType = Group: resolve group owner via GET https://groups.roblox.com/v1/groups/{groupId}, cek owner.userId == buyer.robloxUserId
+
+4. Jika valid: simpan metadata (universeId, creatorId, creatorType, verifiedAt) ke GameWhitelist record
+
+### 13.4 Runtime Creator Consistency Check
+
+Saat game running, asset module (CameraServiceCore) mengirim creatorId dan creatorType (diambil dari game.CreatorId dan game.CreatorType di Roblox engine) ke server di setiap handshake dan heartbeat.
+
+Server membandingkan creatorId dari game dengan yang tersimpan di whitelist record. Jika mismatch, return { valid: false, reason: "creator_mismatch" }.
+
+Karena game.CreatorId diambil dari dalam asset module (yang di-host di Roblox CDN milik developer), buyer tidak dapat memodifikasi nilai ini.
+
+### 13.5 Heartbeat Policy
+
+- Interval: 10 menit
+- Grace fail: 3 kali berturut-turut sebelum license dianggap invalid
+- Setiap heartbeat sukses: reset counter fail ke 0
+- Setiap heartbeat gagal: counter +1
+- Jika counter > 3: set runtime inactive
+
+Timeline toleransi: 30 menit (3 x 10 menit) sebelum enforcement trigger.
+
+### 13.6 Roblox API Caching
+
+Semua response dari Roblox API di-cache in-memory dengan TTL 10 menit:
+- universe:{placeId} -> universeId
+- creator:{universeId} -> { creatorId, creatorType, creatorName }
+- groupOwner:{groupId} -> ownerUserId
+
+Tujuan: mengurangi jumlah request ke Roblox API dan menghindari rate limit.
+
+### 13.7 GameWhitelist Schema (Updated)
+
+| Kolom | Tipe | Keterangan |
+|---|---|---|
+| id | VARCHAR(191) | Primary key |
+| licenseId | VARCHAR(191) | FK ke License |
+| gameId | VARCHAR(64) | Roblox Place ID |
+| universeId | VARCHAR(64) | Resolved dari Roblox API |
+| creatorId | VARCHAR(64) | Creator ID (User atau Group) |
+| creatorType | VARCHAR(16) | "User" atau "Group" |
+| gameName | VARCHAR(191) | Nama game (dari Roblox API) |
+| active | BOOLEAN | Status aktif |
+| verifiedAt | DATETIME | Kapan ownership terakhir diverifikasi |
+| addedAt | DATETIME | Kapan ditambahkan |
+
+---
+
+## 14. Security Threat Model
+
+### 14.1 Mitigasi yang Sudah Aktif
+
+| Threat | Mitigasi | Status |
+|---|---|---|
+| License key sharing | Owner check (creatorId binding) + game whitelist | Mitigated |
+| Fake gameId di request | creatorId diambil dari asset module (tidak bisa di-edit buyer) | Mitigated |
+| Game milik orang lain di-whitelist | Roblox API ownership validation saat whitelist | Mitigated |
+| Group game bukan milik buyer | Group owner check via Roblox API | Mitigated |
+| Bypass license check di script | Obfuscation + runtime gates (4 titik) + dependency pada runtime object | Partially mitigated |
+| Heartbeat false-positive (network issue) | Grace fail 3x (30 menit toleransi) | Mitigated |
+| Webhook payment duplikat | Atomic idempotent transaction | Mitigated |
+| Spam API endpoints | Rate limiting per endpoint | Mitigated |
+| Admin abuse | Audit log + activity tracking | Mitigated |
+| License revocation | Admin kill switch + heartbeat detect | Mitigated |
+| SignKey interception | Derived key (tidak dikirim langsung) + rotate tiap 5 menit | Mitigated |
+
+### 14.2 Residual Risk (Diterima)
+
+| Risk | Alasan Diterima |
+|---|---|
+| Client-side patching oleh advanced attacker | Fundamental limitation Roblox architecture. Effort tinggi, kurang worth it untuk harga 200-500k |
+| Roblox API downtime | Cache 10 menit + validasi hanya saat whitelist (bukan setiap runtime) |
+| In-memory session store | Restart = session hilang. Acceptable untuk skala saat ini |
+| Collab access (tim di game yang sama) | By design allowed, bukan bug |
+
+### 14.3 Operational Response
+
+| Situasi | Response |
+|---|---|
+| Suspicious multi-IP pada 1 license | Review di admin enforcement dashboard, revoke jika abuse |
+| Buyer claim tidak bisa whitelist | Cek robloxUserId match, cek ownership via admin override |
+| License perlu di-revoke | Admin kill switch → heartbeat berikutnya trigger enforcement |
+| Buyer ganti Roblox account | Admin bisa override robloxUserId manual |
+| Roblox API rate limit | Cache sudah handle, retry otomatis, error message jelas ke user |
+
+---
+
+## 15. Endpoint Reference (Complete, Updated Mei 2026)
+
+### 15.1 User Endpoints
+
+| Method | Path | Auth | Rate Limit | Deskripsi |
+|---|---|---|---|---|
+| PUT | /user/roblox-id | Login | - | Set/update Roblox User ID (validate via API) |
+| GET | /user/transactions | Login | - | Riwayat transaksi wallet (paginated, filterable) |
+
+### 15.2 License Enforcement Endpoints
+
+| Method | Path | Auth | Rate Limit | Deskripsi |
+|---|---|---|---|---|
+| POST | /api/license/handshake | Public | 10/min | Verify + signKey + session + creator check |
+| POST | /api/license/heartbeat | Public | 15/min | Recheck + rotate signKey + creator consistency |
+| POST | /api/license/enforce | Public | 5/min | Return encrypted breaking code per phase |
+
+### 15.3 Admin Endpoints (Tambahan)
+
+| Method | Path | Auth | Deskripsi |
+|---|---|---|---|
+| GET | /admin/users | Admin | List semua users (search, filter, paginated) |
+| PUT | /admin/users/:id/role | Admin | Ubah role (tidak bisa demote diri sendiri) |
+| POST | /admin/users/:id/adjust-balance | Admin | Adjust saldo wallet (reason wajib) |
+| GET | /admin/licenses/active | Admin | License aktif saat ini (verified < 5 menit) |
+| GET | /admin/licenses/:id/logs | Admin | Verification logs per license |
+| POST | /admin/licenses/:id/kill | Admin | Kill switch (suspend + trigger enforcement) |
+
+---
+
+*Terakhir diperbarui: 18 Mei 2026*
