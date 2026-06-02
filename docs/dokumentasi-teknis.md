@@ -130,7 +130,7 @@ Backend API (api-rbx.muhwldns.me:3001)
 
 ### 4.1 Daftar Tabel
 
-Sistem menggunakan 18 tabel yang terbagi dalam 4 domain:
+Sistem menggunakan 19 tabel yang terbagi dalam 4 domain utama + 1 tabel counter internal:
 
 **Domain Autentikasi & User:**
 - User, OAuthAccount, Session
@@ -143,6 +143,11 @@ Sistem menggunakan 18 tabel yang terbagi dalam 4 domain:
 
 **Domain Script Store:**
 - ProductCategory, Product, ProductFile, ProductImage, License, GameWhitelist, LicenseVerification, Purchase, Cart, CartItem
+
+**Internal Counter:**
+- PublicIdCounter
+
+PlantUML ERD tersedia di `docs/erd/audio-processing-erd.puml`.
 
 ### 4.2 Detail Tabel
 
