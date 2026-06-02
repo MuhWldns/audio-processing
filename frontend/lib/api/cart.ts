@@ -20,12 +20,14 @@ export type CheckoutResult = {
   ok: boolean;
   purchases: Array<{
     id: string;
+    publicId?: string | null;
     productId: string;
     licenseType: string;
     amountRupiah: number;
   }>;
   licenses: Array<{
     id: string;
+    publicId?: string | null;
     productId: string;
     licenseKey: string;
     licenseType: string;

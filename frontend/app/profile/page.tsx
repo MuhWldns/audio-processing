@@ -77,6 +77,10 @@ export default function ProfilePage() {
         <h2 className="text-lg font-semibold text-white mb-4">Account Information</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
+            <p className="text-xs text-slate-400 mb-1">Account ID</p>
+            <p className="text-sm font-mono text-white break-all">{user.publicId || user.id}</p>
+          </div>
+          <div>
             <p className="text-xs text-slate-400 mb-1">Display Name</p>
             <p className="text-sm text-white">{user.displayName || user.fullName || '-'}</p>
           </div>

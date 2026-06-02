@@ -5,6 +5,7 @@
  */
 
 import { prisma } from "../prisma.js";
+import { generatePublicId } from "../services/publicIdService.js";
 
 export const handleDevLogin = async (req, res) => {
   if (process.env.NODE_ENV === "production") {
@@ -21,14 +22,19 @@ export const handleDevLogin = async (req, res) => {
   let user = await prisma.user.findUnique({ where: { email } });
 
   if (!user) {
-    user = await prisma.user.create({
-      data: {
-        email,
-        displayName: displayName || email.split("@")[0],
-        fullName: displayName || email.split("@")[0],
-        lastLoginAt: new Date(),
-        lastLoginProvider: "GOOGLE",
-      },
+    user = await prisma.$transaction(async (tx) => {
+      const publicId = await generatePublicId(tx, "ACC", "IDN");
+
+      return await tx.user.create({
+        data: {
+          publicId,
+          email,
+          displayName: displayName || email.split("@")[0],
+          fullName: displayName || email.split("@")[0],
+          lastLoginAt: new Date(),
+          lastLoginProvider: "GOOGLE",
+        },
+      });
     });
   }
 

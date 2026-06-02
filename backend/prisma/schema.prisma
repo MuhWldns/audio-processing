@@ -53,6 +53,7 @@ enum ActivityStatus {
 
 model User {
   id             String            @id @default(cuid())
+  publicId       String?           @unique @db.VarChar(32)
   username       String?           @unique @db.VarChar(191)
   fullName       String?           @db.VarChar(191)
   email          String?           @unique @db.VarChar(191)
@@ -130,8 +131,16 @@ model Session {
 
 // ==================== WALLET & TRANSACTIONS ====================
 
+model PublicIdCounter {
+  id         String   @id @default(cuid())
+  scope      String   @unique @db.VarChar(32)
+  nextNumber Int      @default(1)
+  updatedAt  DateTime @updatedAt
+}
+
 model WalletTransaction {
   id              String          @id @default(cuid())
+  publicId        String?         @unique @db.VarChar(32)
   userId          String
   type            TransactionType
   amount          Int             // positive = credit, negative = debit
@@ -152,6 +161,7 @@ model WalletTransaction {
 
 model TopUpOrder {
   id            String       @id @default(cuid())
+  publicId      String?      @unique @db.VarChar(32)
   userId        String
   provider      String       @db.VarChar(64)          // "bayar.gg"
   externalId    String?      @unique @db.VarChar(191) // invoice_id from gateway
@@ -175,6 +185,7 @@ model TopUpOrder {
 
 model UsageEvent {
   id                String       @id @default(cuid())
+  publicId          String?      @unique @db.VarChar(32)
   userId            String
   status            UsageStatus  @default(PENDING)
   audioDurationSec  Int
@@ -215,6 +226,7 @@ model ActivityLog {
 
 model UploadRecord {
   id             String       @id @default(cuid())
+  publicId       String?      @unique @db.VarChar(32)
   userId         String
   fileName       String       @db.VarChar(255)
   source         String?      @db.VarChar(64)
@@ -276,6 +288,7 @@ model ProductCategory {
 
 model Product {
   id          String   @id @default(cuid())
+  publicId    String?  @unique @db.VarChar(32)
   categoryId  String?
   name        String   @db.VarChar(191)
   slug        String   @unique @db.VarChar(191)
@@ -339,6 +352,7 @@ model ProductImage {
 
 model License {
   id              String        @id @default(cuid())
+  publicId        String?       @unique @db.VarChar(32)
   userId          String
   productId       String
   purchaseId      String
@@ -403,6 +417,7 @@ model LicenseVerification {
 
 model Purchase {
   id              String         @id @default(cuid())
+  publicId        String?        @unique @db.VarChar(32)
   userId          String
   productId       String
   licenseType     LicenseType

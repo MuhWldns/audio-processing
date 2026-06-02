@@ -4,6 +4,7 @@
 
 import { prisma } from "../prisma.js";
 import { validateRobloxUser } from "../services/robloxOwnershipService.js";
+import { generatePublicId } from "../services/publicIdService.js";
 
 /**
  * GET /user/transactions - Get user's wallet transaction history
@@ -33,6 +34,7 @@ export const handleGetUserTransactions = async (req, res) => {
   return res.status(200).json({
     transactions: transactions.map((t) => ({
       id: t.id,
+      publicId: t.publicId,
       type: t.type,
       amount: t.amount,
       balanceAfter: t.balanceAfter,
@@ -82,6 +84,7 @@ export const handleAdminListUsers = async (req, res) => {
       skip,
       select: {
         id: true,
+        publicId: true,
         email: true,
         displayName: true,
         fullName: true,
@@ -203,8 +206,11 @@ export const handleAdminAdjustUserBalance = async (req, res) => {
       select: { id: true, walletBalance: true },
     });
 
+    const transactionPublicId = await generatePublicId(tx, "TXN", "ADJ");
+
     await tx.walletTransaction.create({
       data: {
+        publicId: transactionPublicId,
         userId: id,
         type: "ADJUSTMENT",
         amount,

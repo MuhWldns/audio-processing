@@ -8,6 +8,7 @@ import path from "node:path";
 import multer from "multer";
 import { prisma } from "../prisma.js";
 import { debitWallet } from "./databaseService.js";
+import { generatePublicId, getUsageBillingCode } from "./publicIdService.js";
 
 /**
  * Konfigurasi multer untuk file upload
@@ -41,6 +42,26 @@ export const saveUploadRecord = async ({ userId, file, priceData, nextFreeUsedTo
   const fileFormat = path.extname(file.originalname).toLowerCase().replace(".", "");
 
   return await prisma.$transaction(async (tx) => {
+    const usageEventPublicId = await generatePublicId(tx, "USE", getUsageBillingCode(priceData.cost));
+    const uploadRecordPublicId = await generatePublicId(tx, "UPL", String(fileFormat || "BIN").toUpperCase().slice(0, 3));
+    const usageEvent = await tx.usageEvent.create({
+      data: {
+        publicId: usageEventPublicId,
+        userId,
+        status: "COMPLETED",
+        audioDurationSec: 0,
+        exportFormat: fileFormat,
+        costRupiah: priceData.cost,
+        completedAt: new Date(),
+        metadata: {
+          storedFileName,
+          downloadName: fileName,
+          freeCovered: priceData.freeCovered,
+          paidUnits: priceData.paidUnits,
+        },
+      },
+    });
+
     // Debit wallet if paid units > 0
     if (priceData.paidUnits > 0 && priceData.cost > 0) {
       const user = await tx.user.findUnique({
@@ -67,8 +88,10 @@ export const saveUploadRecord = async ({ userId, file, priceData, nextFreeUsedTo
         select: { walletBalance: true },
       });
 
+      const walletTransactionPublicId = await generatePublicId(tx, "TXN", "AUD");
       await tx.walletTransaction.create({
         data: {
+          publicId: walletTransactionPublicId,
           userId,
           type: "AUDIO_CHARGE",
           amount: -priceData.cost,
@@ -117,6 +140,7 @@ export const saveUploadRecord = async ({ userId, file, priceData, nextFreeUsedTo
     // Create upload record
     const uploadRecord = await tx.uploadRecord.create({
       data: {
+        publicId: uploadRecordPublicId,
         userId,
         fileName,
         source: "studio",
@@ -138,17 +162,19 @@ export const saveUploadRecord = async ({ userId, file, priceData, nextFreeUsedTo
       },
     });
 
-    return { uploadRecord, activity };
+    return { uploadRecord, activity, usageEvent };
   });
 };
 
 /**
  * Format upload response untuk client
  */
-export const formatUploadResponse = (uploadRecord, activity) => ({
+export const formatUploadResponse = (uploadRecord, activity, usageEvent) => ({
   ok: true,
   upload: {
     id: uploadRecord.id,
+    publicId: uploadRecord.publicId,
+    usageEventPublicId: usageEvent?.publicId,
     fileName: uploadRecord.fileName,
     fileFormat: uploadRecord.fileFormat,
     createdAt: uploadRecord.createdAt,
@@ -164,6 +190,7 @@ export const formatUploadResponse = (uploadRecord, activity) => ({
 export const formatHistoryResponse = (uploads) => {
   return uploads.map((item) => ({
     id: item.id,
+    publicId: item.publicId,
     fileName: item.fileName,
     fileFormat: item.fileFormat,
     status: item.status,

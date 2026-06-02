@@ -1,5 +1,6 @@
 export type License = {
   id: string;
+  publicId?: string | null;
   licenseKey: string;
   licenseType: 'PERSONAL' | 'COMMERCIAL' | 'ENTERPRISE';
   status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED' | 'EXPIRED';

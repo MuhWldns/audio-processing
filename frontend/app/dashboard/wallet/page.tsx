@@ -9,6 +9,7 @@ const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 type Transaction = {
   id: string;
+  publicId?: string | null;
   type: string;
   amount: number;
   balanceAfter: number;
@@ -122,7 +123,7 @@ export default function WalletPage() {
               <div key={tx.id} className="flex items-center justify-between gap-4 rounded-xl border border-white/5 bg-white/[0.02] p-3">
                 <div className="min-w-0">
                   <p className="text-sm text-white truncate">{tx.description || tx.type}</p>
-                  <p className="text-xs text-slate-500">{formatDate(tx.createdAt)}</p>
+                  <p className="text-xs text-slate-500">{tx.publicId || tx.id} · {formatDate(tx.createdAt)}</p>
                 </div>
                 <p className={`text-sm font-semibold shrink-0 ${tx.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {tx.amount >= 0 ? '+' : ''}{formatRupiah(tx.amount)}

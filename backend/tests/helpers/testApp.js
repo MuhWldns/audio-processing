@@ -39,7 +39,7 @@ export function createTestApp(setupRoutes, options = {}) {
 
   // Simple requireAuth middleware for tests
   const requireAuth = (req, res, next) => {
-    if (!req.user) {
+    if (!req.isAuthenticated?.()) {
       return res.status(401).json({ error: "Not authenticated" });
     }
     next();
@@ -60,6 +60,7 @@ export function createTestApp(setupRoutes, options = {}) {
  */
 export const mockUser = {
   id: "user-test-123",
+  publicId: "ACC-IDN-2606-000001",
   email: "test@example.com",
   displayName: "Test User",
   fullName: "Test User",
@@ -80,6 +81,7 @@ export const mockUser = {
 
 export const mockProduct = {
   id: "product-test-123",
+  publicId: "PRD-SCR-2606-000001",
   categoryId: "cat-test-123",
   name: "Test Script",
   slug: "test-script",

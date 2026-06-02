@@ -97,6 +97,7 @@ export default function CheckoutSuccessPage() {
 
         {result.licenses.map((license) => {
           const purchase = result.purchases.find((p) => p.productId === license.productId);
+          const licenseLabel = license.publicId || license.id;
           return (
             <div
               key={license.id}
@@ -105,6 +106,7 @@ export default function CheckoutSuccessPage() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-sm text-slate-400">{license.licenseType} License</p>
+                  <p className="text-xs font-mono text-violet-300 mt-0.5">{licenseLabel}</p>
                   <p className="text-xs text-slate-500 mt-0.5">
                     Max Games: {license.maxGames ?? 'Unlimited'}
                   </p>
@@ -181,16 +183,17 @@ export default function CheckoutSuccessPage() {
       {showInvoice && result && (
         <Invoice
           data={{
-            invoiceId: `INV-${result.purchases[0]?.id?.slice(0, 8) || 'unknown'}`,
+            invoiceId: result.purchases[0]?.publicId || `INV-${result.purchases[0]?.id?.slice(0, 8) || 'unknown'}`,
             date: new Date().toISOString(),
             buyer: {
               name: user?.displayName || user?.fullName || 'User',
               email: user?.email || '-',
-              accountId: user?.id || '-',
+              accountId: user?.publicId || user?.id || '-',
             },
             items: result.licenses.map((license, i) => ({
               productName: `Product ${i + 1}`,
               licenseType: license.licenseType,
+              licenseId: license.publicId || license.id,
               licenseKey: license.licenseKey,
               maxGames: license.maxGames,
               amount: result.purchases[i]?.amountRupiah || 0,

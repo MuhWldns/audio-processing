@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { prisma } from "../prisma.js";
 import { sendPurchaseSuccessEmail } from "../services/emailService.js";
 import { debitWallet } from "../services/databaseService.js";
+import { generatePublicId, getLicenseTypeCode } from "../services/publicIdService.js";
 
 /**
  * Generate a unique license key
@@ -130,9 +131,12 @@ export const handleCheckout = async (req, res) => {
     const licenses = [];
 
     for (const item of purchasableItems) {
+      const licenseTypeCode = getLicenseTypeCode(item.licenseType);
+      const purchasePublicId = await generatePublicId(tx, "PUR", licenseTypeCode);
       // Create purchase record
       const purchase = await tx.purchase.create({
         data: {
+          publicId: purchasePublicId,
           userId,
           productId: item.productId,
           licenseType: item.licenseType,
@@ -156,8 +160,10 @@ export const handleCheckout = async (req, res) => {
       }
 
       // Create license
+      const licensePublicId = await generatePublicId(tx, "LIC", licenseTypeCode);
       const license = await tx.license.create({
         data: {
+          publicId: licensePublicId,
           userId,
           productId: item.productId,
           purchaseId: purchase.id,
@@ -170,8 +176,10 @@ export const handleCheckout = async (req, res) => {
       licenses.push(license);
 
       // Create wallet transaction for each purchase
+      const walletTransactionPublicId = await generatePublicId(tx, "TXN", "PUR");
       await tx.walletTransaction.create({
         data: {
+          publicId: walletTransactionPublicId,
           userId,
           type: "PURCHASE",
           amount: -item.priceRupiah,
@@ -242,12 +250,14 @@ export const handleCheckout = async (req, res) => {
     ok: true,
     purchases: result.purchases.map((p) => ({
       id: p.id,
+      publicId: p.publicId,
       productId: p.productId,
       licenseType: p.licenseType,
       amountRupiah: p.amountRupiah,
     })),
     licenses: result.licenses.map((l) => ({
       id: l.id,
+      publicId: l.publicId,
       productId: l.productId,
       licenseKey: l.licenseKey,
       licenseType: l.licenseType,

@@ -55,7 +55,7 @@ export default function HistoryPage() {
                       <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.25em] text-violet-100">{item.status}</span>
                     </div>
                     <p className="text-sm text-slate-300">
-                      Format: {item.fileFormat.toUpperCase()} · Saved {formatDate(item.createdAt)}
+                      {item.publicId || item.id} · Format: {item.fileFormat.toUpperCase()} · Saved {formatDate(item.createdAt)}
                     </p>
                     <p className="text-sm text-slate-300">{item.activity?.description || "Saved from the editor."}</p>
                   </div>

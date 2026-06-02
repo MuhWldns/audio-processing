@@ -66,6 +66,7 @@ export const handleGetProducts = async (req, res) => {
   return res.status(200).json({
     products: products.map((p) => ({
       id: p.id,
+      publicId: p.publicId,
       name: p.name,
       slug: p.slug,
       shortDesc: p.shortDesc,
@@ -118,6 +119,7 @@ export const handleGetProductDetail = async (req, res) => {
 
   return res.status(200).json({
     id: product.id,
+    publicId: product.publicId,
     name: product.name,
     slug: product.slug,
     description: product.description,

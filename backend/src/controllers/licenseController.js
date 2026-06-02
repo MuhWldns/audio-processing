@@ -34,6 +34,7 @@ export const handleGetLicenses = async (req, res) => {
   return res.status(200).json({
     licenses: licenses.map((l) => ({
       id: l.id,
+      publicId: l.publicId,
       licenseKey: l.licenseKey,
       licenseType: l.licenseType,
       status: l.status,
@@ -62,7 +63,7 @@ export const handleGetLicenseDetail = async (req, res) => {
         select: { id: true, name: true, slug: true, thumbnail: true, version: true, description: true },
       },
       purchase: {
-        select: { id: true, amountRupiah: true, purchasedAt: true },
+        select: { id: true, publicId: true, amountRupiah: true, purchasedAt: true },
       },
       gameWhitelist: {
         orderBy: { addedAt: "desc" },
@@ -82,6 +83,7 @@ export const handleGetLicenseDetail = async (req, res) => {
 
   return res.status(200).json({
     id: license.id,
+    publicId: license.publicId,
     licenseKey: license.licenseKey,
     licenseType: license.licenseType,
     status: license.status,

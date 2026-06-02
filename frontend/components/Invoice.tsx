@@ -13,6 +13,7 @@ type InvoiceData = {
   items: Array<{
     productName: string;
     licenseType: string;
+    licenseId?: string | null;
     licenseKey: string;
     maxGames: number | null;
     amount: number;
@@ -29,6 +30,7 @@ const formatDate = (value: string) =>
 
 export default function Invoice({ data, onClose }: { data: InvoiceData; onClose: () => void }) {
   const invoiceRef = useRef<HTMLDivElement>(null);
+  const accountLabel = data.buyer.accountId.includes('-') ? data.buyer.accountId : `${data.buyer.accountId.slice(0, 12)}...`;
 
   const handlePrint = () => {
     window.print();
@@ -74,7 +76,7 @@ export default function Invoice({ data, onClose }: { data: InvoiceData; onClose:
             <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Bill To</h2>
             <p className="text-sm font-medium text-gray-900">{data.buyer.name}</p>
             <p className="text-sm text-gray-600">{data.buyer.email}</p>
-            <p className="text-xs text-gray-400 mt-0.5">Account: {data.buyer.accountId.slice(0, 12)}...</p>
+            <p className="text-xs text-gray-400 mt-0.5">Account: {accountLabel}</p>
           </div>
 
           {/* Items table */}
@@ -92,6 +94,7 @@ export default function Invoice({ data, onClose }: { data: InvoiceData; onClose:
                   <tr key={i} className="border-b border-gray-100">
                     <td className="py-3">
                       <p className="font-medium text-gray-900">{item.productName}</p>
+                      {item.licenseId ? <p className="text-xs text-gray-400 font-mono mt-0.5">{item.licenseId}</p> : null}
                       <p className="text-xs text-gray-500 font-mono mt-0.5">{item.licenseKey}</p>
                     </td>
                     <td className="py-3">
@@ -121,7 +124,7 @@ export default function Invoice({ data, onClose }: { data: InvoiceData; onClose:
               <div key={i} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
                 <div>
                   <p className="text-sm font-medium text-gray-900">{item.productName}</p>
-                  <p className="text-xs text-gray-500">{item.licenseType} · Valid: Lifetime</p>
+                  <p className="text-xs text-gray-500">{item.licenseType} · {item.licenseId || 'License'} · Valid: Lifetime</p>
                 </div>
                 <code className="text-xs font-mono text-violet-700 bg-violet-50 px-2 py-1 rounded">{item.licenseKey}</code>
               </div>

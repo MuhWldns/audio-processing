@@ -9,6 +9,7 @@ const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 type Transaction = {
   id: string;
+  publicId?: string | null;
   type: 'TOP_UP' | 'PURCHASE' | 'AUDIO_CHARGE' | 'REFUND' | 'ADJUSTMENT';
   amount: number;
   balanceAfter: number;
@@ -127,7 +128,7 @@ export default function TransactionsPage() {
                   </span>
                   <div className="min-w-0">
                     <p className="text-sm text-white truncate">{tx.description || '-'}</p>
-                    <p className="text-xs text-slate-500">{formatDate(tx.createdAt)}</p>
+                    <p className="text-xs text-slate-500">{tx.publicId || tx.id} · {formatDate(tx.createdAt)}</p>
                   </div>
                 </div>
                 <div className="text-right shrink-0">

@@ -5,6 +5,7 @@
 import path from "node:path";
 import { prisma } from "../prisma.js";
 import { uploadFile, generateFileKey, deleteFile } from "../services/storageService.js";
+import { generatePublicId, getProductDomainCode } from "../services/publicIdService.js";
 
 // ==================== PRODUCT CRUD ====================
 
@@ -24,21 +25,29 @@ export const handleAdminCreateProduct = async (req, res) => {
     return res.status(409).json({ error: "Product with this slug already exists" });
   }
 
-  const product = await prisma.product.create({
-    data: {
-      name,
-      slug,
-      description,
-      shortDesc: shortDesc || null,
-      thumbnail: thumbnail || null,
-      categoryId: categoryId || null,
-      pricePersonal: pricePersonal || 0,
-      priceCommercial: priceCommercial || 0,
-      priceEnterprise: priceEnterprise || 0,
-      featured: featured || false,
-      version: version || "1.0.0",
-      tags: tags || null,
-    },
+  const product = await prisma.$transaction(async (tx) => {
+    const category = categoryId
+      ? await tx.productCategory.findUnique({ where: { id: categoryId }, select: { slug: true, name: true } })
+      : null;
+    const publicId = await generatePublicId(tx, "PRD", getProductDomainCode(category?.slug || category?.name));
+
+    return tx.product.create({
+      data: {
+        publicId,
+        name,
+        slug,
+        description,
+        shortDesc: shortDesc || null,
+        thumbnail: thumbnail || null,
+        categoryId: categoryId || null,
+        pricePersonal: pricePersonal || 0,
+        priceCommercial: priceCommercial || 0,
+        priceEnterprise: priceEnterprise || 0,
+        featured: featured || false,
+        version: version || "1.0.0",
+        tags: tags || null,
+      },
+    });
   });
 
   return res.status(201).json({ ok: true, product });

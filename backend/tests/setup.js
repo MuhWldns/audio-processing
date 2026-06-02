@@ -46,6 +46,7 @@ vi.mock("../src/prisma.js", () => {
       usageEvent: createMockModel(),
       activityLog: createMockModel(),
       uploadRecord: createMockModel(),
+      publicIdCounter: createMockModel(),
       topUpOrder: createMockModel(),
       topUpTransaction: createMockModel(),
       serviceTransaction: createMockModel(),

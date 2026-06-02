@@ -1,6 +1,7 @@
 import { prisma } from "../prisma.js";
 import { createBayarPayment, verifyBayarWebhookSignature } from "../services/bayarService.js";
 import { sendTopUpSuccessEmail } from "../services/emailService.js";
+import { generatePublicId } from "../services/publicIdService.js";
 
 const MIN_TOPUP_AMOUNT = 1000;
 const MAX_QRIS_AMOUNT = 500000;
@@ -71,21 +72,26 @@ export const handleCreateTopUp = async (req, res) => {
 
   const metadata = buildTopUpMetadata(paymentData);
 
-  const order = await prisma.topUpOrder.create({
-    data: {
-      userId: req.user.id,
-      provider: PROVIDER_NAME,
-      externalId: invoiceId,
-      amountRupiah: amount,
-      finalAmount: paymentData?.data?.final_amount ? Number(paymentData.data.final_amount) : null,
-      status: "PENDING",
-      metadata,
-    },
+  const order = await prisma.$transaction(async (tx) => {
+    const publicId = await generatePublicId(tx, "TOP", "IDR");
+    return tx.topUpOrder.create({
+      data: {
+        publicId,
+        userId: req.user.id,
+        provider: PROVIDER_NAME,
+        externalId: invoiceId,
+        amountRupiah: amount,
+        finalAmount: paymentData?.data?.final_amount ? Number(paymentData.data.final_amount) : null,
+        status: "PENDING",
+        metadata,
+      },
+    });
   });
 
   return res.status(201).json({
     ok: true,
     orderId: order.id,
+    publicId: order.publicId,
     invoiceId,
     amount,
     paymentUrl: metadata.paymentUrl,
@@ -160,8 +166,10 @@ export const handleBayarWebhook = async (req, res) => {
       });
 
       // Record in unified ledger
+      const transactionPublicId = await generatePublicId(tx, "TXN", "TOP");
       await tx.walletTransaction.create({
         data: {
+          publicId: transactionPublicId,
           userId: order.userId,
           type: "TOP_UP",
           amount,
@@ -240,9 +248,10 @@ export const handleGetTopUpStatus = async (req, res) => {
         { externalId: reference },
       ],
     },
-    select: {
-      id: true,
-      status: true,
+      select: {
+        id: true,
+        publicId: true,
+        status: true,
       amountRupiah: true,
       finalAmount: true,
       createdAt: true,
@@ -256,6 +265,7 @@ export const handleGetTopUpStatus = async (req, res) => {
 
   return res.status(200).json({
     ok: true,
+    publicId: order.publicId,
     paid: order.status === "COMPLETED",
     status: order.status,
     amount: order.amountRupiah,

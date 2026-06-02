@@ -9,6 +9,10 @@ import { createTestApp, mockUser } from "../helpers/testApp.js";
 import { prisma } from "../../src/prisma.js";
 import { handleCheckout } from "../../src/controllers/checkoutController.js";
 
+const createMockModel = () => ({
+  upsert: vi.fn(),
+});
+
 function buildApp(user = mockUser) {
   return createTestApp((app, { requireAuth }) => {
     app.post("/checkout", requireAuth, handleCheckout);
@@ -17,6 +21,7 @@ function buildApp(user = mockUser) {
 
 describe("Checkout Route", () => {
   beforeEach(() => {
+    prisma.publicIdCounter ??= createMockModel();
     Object.values(prisma).forEach((model) => {
       if (typeof model === "object" && model !== null) {
         Object.values(model).forEach((method) => {
@@ -108,10 +113,14 @@ describe("Checkout Route", () => {
 
       // Inside $transaction
       prisma.user.update.mockResolvedValue({ walletBalance: 75000 });
-      prisma.purchase.create.mockResolvedValue({ id: "pur-1", userId: mockUser.id, productId: "p1", licenseType: "PERSONAL", amountRupiah: 25000, status: "COMPLETED" });
+      prisma.publicIdCounter.upsert
+        .mockResolvedValueOnce({ scope: "PUR-PER-2606", nextNumber: 2 })
+        .mockResolvedValueOnce({ scope: "LIC-PER-2606", nextNumber: 2 })
+        .mockResolvedValueOnce({ scope: "TXN-PUR-2606", nextNumber: 2 });
+      prisma.purchase.create.mockResolvedValue({ id: "pur-1", publicId: "PUR-PER-2606-000001", userId: mockUser.id, productId: "p1", licenseType: "PERSONAL", amountRupiah: 25000, status: "COMPLETED" });
       prisma.license.findUnique.mockResolvedValue(null);
-      prisma.license.create.mockResolvedValue({ id: "lic-1", userId: mockUser.id, productId: "p1", licenseKey: "RBXR-AAAA-BBBB-CCCC-DDDD", licenseType: "PERSONAL", status: "ACTIVE", maxGames: 3 });
-      prisma.walletTransaction.create.mockResolvedValue({ id: "wt-1" });
+      prisma.license.create.mockResolvedValue({ id: "lic-1", publicId: "LIC-PER-2606-000001", userId: mockUser.id, productId: "p1", licenseKey: "RBXR-AAAA-BBBB-CCCC-DDDD", licenseType: "PERSONAL", status: "ACTIVE", maxGames: 3 });
+      prisma.walletTransaction.create.mockResolvedValue({ id: "wt-1", publicId: "TXN-PUR-2606-000001" });
       prisma.activityLog.create.mockResolvedValue({ id: "act-1" });
       prisma.cartItem.deleteMany.mockResolvedValue({ count: 1 });
 
@@ -120,10 +129,27 @@ describe("Checkout Route", () => {
 
       expect(res.status).toBe(201);
       expect(res.body.ok).toBe(true);
+      expect(res.body.purchases[0].publicId).toMatch(/^PUR-PER-\d{4}-000001$/);
       expect(res.body.licenses).toHaveLength(1);
+      expect(res.body.licenses[0].publicId).toMatch(/^LIC-PER-\d{4}-000001$/);
       expect(res.body.licenses[0].licenseKey).toMatch(/^RBXR-/);
       expect(res.body.totalCharged).toBe(25000);
       expect(res.body.newBalance).toBe(75000);
+      expect(prisma.purchase.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          publicId: expect.stringMatching(/^PUR-PER-\d{4}-000001$/),
+        }),
+      }));
+      expect(prisma.license.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          publicId: expect.stringMatching(/^LIC-PER-\d{4}-000001$/),
+        }),
+      }));
+      expect(prisma.walletTransaction.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          publicId: expect.stringMatching(/^TXN-PUR-\d{4}-000001$/),
+        }),
+      }));
     });
   });
 });

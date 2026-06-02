@@ -1,5 +1,6 @@
 export type UploadHistoryItem = {
   id: string;
+  publicId?: string | null;
   fileName: string;
   fileFormat: string;
   status: "PENDING" | "COMPLETED" | "FAILED" | "CANCELED";

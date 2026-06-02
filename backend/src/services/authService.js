@@ -6,6 +6,7 @@ import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { Strategy as DiscordStrategy } from "passport-discord";
 import { prisma } from "../prisma.js";
+import { generatePublicId } from "./publicIdService.js";
 
 const googleScopes = ["email", "profile"];
 const discordScopes = ["identify", "email"];
@@ -57,7 +58,80 @@ export const mapDiscordProfile = (profile) => {
  * @param {Object} params - OAuth parameters
  * @returns {Promise<Object>} User object
  */
-export const upsertOAuthUser = async ({ provider, providerAccountId, email, displayName, avatarUrl, accessToken, refreshToken, expiresAt, scope, tokenType, idToken }) => {
+async function findOAuthAccount({ provider, providerAccountId }) {
+  return await prisma.oAuthAccount.findUnique({
+    where: {
+      provider_providerAccountId: {
+        provider,
+        providerAccountId,
+      },
+    },
+    include: {
+      user: true,
+    },
+  });
+}
+
+async function updateExistingOAuthAccount(account, { provider, email, displayName, avatarUrl, accessToken, refreshToken, expiresAt, scope, tokenType, idToken }) {
+  return await prisma.$transaction(async (tx) => {
+    const updatedUser = await tx.user.update({
+      where: { id: account.userId },
+      data: {
+        email: account.user.email ?? email ?? undefined,
+        displayName: displayName ?? account.user.displayName ?? undefined,
+        avatarUrl: avatarUrl ?? account.user.avatarUrl ?? undefined,
+        lastLoginAt: new Date(),
+        lastLoginProvider: provider,
+      },
+    });
+
+    await tx.oAuthAccount.update({
+      where: { id: account.id },
+      data: {
+        accessToken,
+        refreshToken,
+        expiresAt,
+        scope,
+        tokenType,
+        idToken,
+      },
+    });
+
+    return updatedUser;
+  });
+}
+
+async function createOAuthUser({ provider, providerAccountId, email, displayName, avatarUrl, accessToken, refreshToken, expiresAt, scope, tokenType, idToken }) {
+  return await prisma.$transaction(async (tx) => {
+    const publicId = await generatePublicId(tx, "ACC", "IDN");
+
+    return await tx.user.create({
+      data: {
+        publicId,
+        email,
+        displayName,
+        avatarUrl,
+        lastLoginAt: new Date(),
+        lastLoginProvider: provider,
+        accounts: {
+          create: {
+            provider,
+            providerAccountId,
+            accessToken,
+            refreshToken,
+            expiresAt,
+            scope,
+            tokenType,
+            idToken,
+          },
+        },
+      },
+    });
+  });
+}
+
+async function upsertOAuthUserOnce(params, { retryOnUniqueConflict = true } = {}) {
+  const { provider, providerAccountId } = params;
   const account = await prisma.oAuthAccount.findUnique({
     where: {
       provider_providerAccountId: {
@@ -71,56 +145,26 @@ export const upsertOAuthUser = async ({ provider, providerAccountId, email, disp
   });
 
   if (account) {
-    const user = await prisma.user.update({
-      where: { id: account.userId },
-      data: {
-        email: account.user.email ?? email ?? undefined,
-        displayName: displayName ?? account.user.displayName ?? undefined,
-        avatarUrl: avatarUrl ?? account.user.avatarUrl ?? undefined,
-        lastLoginAt: new Date(),
-        lastLoginProvider: provider,
-      },
-    });
-
-    await prisma.oAuthAccount.update({
-      where: { id: account.id },
-      data: {
-        accessToken,
-        refreshToken,
-        expiresAt,
-        scope,
-        tokenType,
-        idToken,
-      },
-    });
-
-    return user;
+    return await updateExistingOAuthAccount(account, params);
   }
 
-  const user = await prisma.user.create({
-    data: {
-      email,
-      displayName,
-      avatarUrl,
-      lastLoginAt: new Date(),
-      lastLoginProvider: provider,
-      accounts: {
-        create: {
-          provider,
-          providerAccountId,
-          accessToken,
-          refreshToken,
-          expiresAt,
-          scope,
-          tokenType,
-          idToken,
-        },
-      },
-    },
-  });
+  try {
+    return await createOAuthUser(params);
+  } catch (error) {
+    if (error?.code !== "P2002" || !retryOnUniqueConflict) {
+      throw error;
+    }
 
-  return user;
-};
+    const existingAccount = await findOAuthAccount({ provider, providerAccountId });
+    if (!existingAccount) {
+      throw error;
+    }
+
+    return await updateExistingOAuthAccount(existingAccount, params);
+  }
+}
+
+export const upsertOAuthUser = async (params) => upsertOAuthUserOnce(params);
 
 /**
  * Konfigurasi passport untuk OAuth
@@ -396,6 +440,7 @@ export async function buildMePayload(userId) {
 
   return {
     id: user.id,
+    publicId: user.publicId,
     email: user.email,
     username: user.username,
     fullName: user.fullName,

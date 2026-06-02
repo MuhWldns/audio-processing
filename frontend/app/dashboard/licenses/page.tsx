@@ -132,7 +132,7 @@ export default function DashboardLicensesPage() {
                   <p className="text-sm font-semibold text-white truncate">{license.product.name}</p>
                   <StatusBadge status={license.status} />
                 </div>
-                <p className="text-xs text-slate-400">{license.licenseType} License</p>
+                <p className="text-xs text-slate-400">{license.licenseType} License · {license.publicId || license.id}</p>
                 <div className="flex items-center gap-3 text-xs text-slate-500">
                   <code className="font-mono">{maskKey(license.licenseKey)}</code>
                   <span>·</span>

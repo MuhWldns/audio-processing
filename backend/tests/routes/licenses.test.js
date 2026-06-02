@@ -66,6 +66,7 @@ describe("License Management Routes", () => {
       prisma.license.findMany.mockResolvedValue([
         {
           ...mockLicense,
+          publicId: "LIC-PER-2606-000001",
           product: { id: "p1", name: "Test Script", slug: "test-script", thumbnail: null, version: "1.0.0" },
           gameWhitelist: [{ id: "gw-1", gameId: "123456", gameName: "My Game", addedAt: new Date() }],
           _count: { verifications: 5 },
@@ -77,6 +78,7 @@ describe("License Management Routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.licenses).toHaveLength(1);
+      expect(res.body.licenses[0].publicId).toBe("LIC-PER-2606-000001");
       expect(res.body.licenses[0].licenseKey).toBe("RBXR-TEST-1234-ABCD-EF56");
       expect(res.body.licenses[0].games).toHaveLength(1);
     });
@@ -94,8 +96,9 @@ describe("License Management Routes", () => {
     it("should return license detail", async () => {
       prisma.license.findFirst.mockResolvedValue({
         ...mockLicense,
+        publicId: "LIC-PER-2606-000001",
         product: { id: "p1", name: "Test Script", slug: "test-script", thumbnail: null, version: "1.0.0", description: "desc" },
-        purchase: { id: "pur-1", amountRupiah: 25000, purchasedAt: new Date() },
+        purchase: { id: "pur-1", publicId: "PUR-PER-2606-000001", amountRupiah: 25000, purchasedAt: new Date() },
         gameWhitelist: [],
         verifications: [],
       });
@@ -104,6 +107,8 @@ describe("License Management Routes", () => {
       const res = await request(app).get("/licenses/license-test-123");
 
       expect(res.status).toBe(200);
+      expect(res.body.publicId).toBe("LIC-PER-2606-000001");
+      expect(res.body.purchase.publicId).toBe("PUR-PER-2606-000001");
       expect(res.body.licenseKey).toBe("RBXR-TEST-1234-ABCD-EF56");
       expect(res.body.licenseType).toBe("PERSONAL");
     });

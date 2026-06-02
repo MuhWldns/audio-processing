@@ -108,7 +108,7 @@ describe("User Controller", () => {
 
     it("should return paginated transactions", async () => {
       prisma.walletTransaction.findMany.mockResolvedValue([
-        { id: "tx-1", type: "TOP_UP", amount: 50000, balanceAfter: 50000, description: "Top up", createdAt: new Date() },
+        { id: "tx-1", publicId: "TXN-TOP-2606-000001", type: "TOP_UP", amount: 50000, balanceAfter: 50000, description: "Top up", createdAt: new Date() },
       ]);
       prisma.walletTransaction.count.mockResolvedValue(1);
 
@@ -116,6 +116,7 @@ describe("User Controller", () => {
       const res = await request(app).get("/user/transactions?page=1&limit=20");
       expect(res.status).toBe(200);
       expect(res.body.transactions).toHaveLength(1);
+      expect(res.body.transactions[0].publicId).toBe("TXN-TOP-2606-000001");
       expect(res.body.transactions[0].type).toBe("TOP_UP");
       expect(res.body.pagination.total).toBe(1);
     });
@@ -146,6 +147,7 @@ describe("User Controller", () => {
       const res = await request(app).get("/admin/users");
       expect(res.status).toBe(200);
       expect(res.body.users).toHaveLength(1);
+      expect(res.body.users[0].publicId).toBe("ACC-IDN-2606-000001");
       expect(res.body.users[0].licensesCount).toBe(2);
     });
 
@@ -221,6 +223,7 @@ describe("User Controller", () => {
     it("should adjust balance successfully", async () => {
       prisma.user.findUnique.mockResolvedValue({ id: "user-2", walletBalance: 50000, email: "x", displayName: "X" });
       prisma.user.update.mockResolvedValue({ id: "user-2", walletBalance: 75000 });
+      prisma.publicIdCounter.upsert.mockResolvedValue({ nextNumber: 2 });
       prisma.walletTransaction.create.mockResolvedValue({});
       prisma.activityLog.create.mockResolvedValue({});
 
@@ -229,6 +232,13 @@ describe("User Controller", () => {
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(res.body.user.newBalance).toBe(75000);
+      expect(prisma.walletTransaction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            publicId: expect.stringMatching(/^TXN-ADJ-\d{4}-000001$/),
+          }),
+        })
+      );
     });
   });
 });

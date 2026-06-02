@@ -19,6 +19,7 @@ const formatRupiah = (value: number) =>
 
 type LicenseDetailData = {
   id: string;
+  publicId?: string | null;
   licenseKey: string;
   licenseType: string;
   status: string;
@@ -35,6 +36,7 @@ type LicenseDetailData = {
   };
   purchase?: {
     id: string;
+    publicId?: string | null;
     amountRupiah: number;
     purchasedAt: string;
   };
@@ -252,7 +254,7 @@ export default function LicenseDetailPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1">
             <h1 className="text-2xl font-bold text-white">{license.product.name}</h1>
-            <p className="text-sm text-slate-400">{license.licenseType} License</p>
+            <p className="text-sm text-slate-400">{license.licenseType} License · {license.publicId || license.id}</p>
           </div>
           <StatusBadge status={license.status} />
         </div>
@@ -262,6 +264,7 @@ export default function LicenseDetailPage() {
             <div className="rounded-xl border border-white/10 bg-white/5 p-3">
               <p className="text-xs text-slate-400">Purchased</p>
               <p className="font-medium text-white">{formatDate(license.purchase.purchasedAt)}</p>
+              <p className="text-xs font-mono text-violet-300 mt-0.5">{license.purchase.publicId || license.purchase.id}</p>
               <p className="text-xs text-slate-400 mt-0.5">{formatRupiah(license.purchase.amountRupiah)}</p>
             </div>
           )}
