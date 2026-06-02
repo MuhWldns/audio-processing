@@ -158,6 +158,29 @@ backend/
 | `Purchase` | Purchase records |
 | `Cart` / `CartItem` | Shopping cart |
 
+### Public IDs
+
+Business records keep internal CUID `id` values for database relations and also expose nullable unique `publicId` values for UI, invoice, admin, and support references.
+
+| Model | Format |
+|-------|--------|
+| `User` | `ACC-IDN-YYMM-000001` |
+| `TopUpOrder` | `TOP-IDR-YYMM-000001` |
+| `WalletTransaction` | `TXN-TOP/PUR/AUD/REF/ADJ-YYMM-000001` |
+| `Purchase` | `PUR-PER/COM/ENT-YYMM-000001` |
+| `License` | `LIC-PER/COM/ENT-YYMM-000001` |
+| `Product` | `PRD-AUD/RBX/SCR-YYMM-000001` |
+| `UploadRecord` | `UPL-WAV/MP3/OGG-YYMM-000001` |
+| `UsageEvent` | `USE-FREE/PAID-YYMM-000001` |
+
+`PublicIdCounter` stores per-scope counters such as `PUR-COM-2606`. Existing rows can be filled with:
+
+```bash
+bun run backfill:public-ids
+```
+
+`publicId` remains nullable during staged rollout; run the backfill before any future `NOT NULL` migration.
+
 ### Wallet System
 
 - **Single source of truth:** `User.walletBalance` (Rupiah)

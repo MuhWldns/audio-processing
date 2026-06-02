@@ -146,6 +146,40 @@ Sistem menggunakan 18 tabel yang terbagi dalam 4 domain:
 
 ### 4.2 Detail Tabel
 
+#### PublicIdCounter
+
+Counter internal untuk menghasilkan `publicId` yang pendek, bermakna, dan unik per scope/bulan. Primary key CUID (`id`) tetap dipakai untuk relasi database; `publicId` dipakai untuk UI, invoice, admin, dan support.
+
+Format umum:
+
+```text
+PREFIX-CODE-YYMM-SEQUENCE
+```
+
+Contoh format:
+
+| Table | Format | Contoh |
+|---|---|---|
+| User | ACC-IDN-YYMM-000001 | ACC-IDN-2606-000001 |
+| TopUpOrder | TOP-IDR-YYMM-000001 | TOP-IDR-2606-000001 |
+| WalletTransaction | TXN-TOP/PUR/AUD/REF/ADJ-YYMM-000001 | TXN-PUR-2606-000001 |
+| Purchase | PUR-PER/COM/ENT-YYMM-000001 | PUR-COM-2606-000001 |
+| License | LIC-PER/COM/ENT-YYMM-000001 | LIC-COM-2606-000001 |
+| Product | PRD-AUD/RBX/SCR-YYMM-000001 | PRD-SCR-2606-000001 |
+| UploadRecord | UPL-WAV/MP3/OGG-YYMM-000001 | UPL-WAV-2606-000001 |
+| UsageEvent | USE-FREE/PAID-YYMM-000001 | USE-PAID-2606-000001 |
+
+| Kolom | Tipe | Nullable | Default | Keterangan |
+|---|---|---|---|---|
+| id | VARCHAR(191) | Tidak | cuid() | Primary key |
+| scope | VARCHAR(32) | Tidak | - | Prefix counter, contoh PUR-COM-2606 |
+| nextNumber | INTEGER | Tidak | 1 | Nomor berikutnya untuk scope tersebut |
+| updatedAt | DATETIME | Tidak | auto | Waktu update counter |
+
+Unique: scope
+
+---
+
 #### User
 
 Tabel utama yang menyimpan data pengguna. Wallet balance disimpan langsung di tabel ini sebagai single source of truth.
@@ -153,6 +187,7 @@ Tabel utama yang menyimpan data pengguna. Wallet balance disimpan langsung di ta
 | Kolom | Tipe | Nullable | Default | Keterangan |
 |---|---|---|---|---|
 | id | VARCHAR(191) | Tidak | cuid() | Primary key |
+| publicId | VARCHAR(32) | Ya | - | ID publik unik untuk display/support (format: ACC-IDN-YYMM-000001) |
 | username | VARCHAR(191) | Ya | - | Username unik (opsional) |
 | fullName | VARCHAR(191) | Ya | - | Nama lengkap |
 | email | VARCHAR(191) | Ya | - | Email (unik) |
@@ -172,7 +207,10 @@ Tabel utama yang menyimpan data pengguna. Wallet balance disimpan langsung di ta
 | createdAt | DATETIME | Tidak | now() | Waktu pembuatan akun |
 | updatedAt | DATETIME | Tidak | auto | Waktu update terakhir |
 
+Unique: publicId, email, username
 Index: email, username, lastLoginAt, walletBalance, totalSpent
+
+Catatan: `id` tetap dipakai untuk relasi internal. `publicId` dipakai untuk UI, invoice, admin/support, dan bisa null pada data lama sebelum backfill.
 
 ---
 
@@ -183,6 +221,7 @@ Menyimpan data akun OAuth yang terhubung ke user. Satu user bisa punya multiple 
 | Kolom | Tipe | Nullable | Default | Keterangan |
 |---|---|---|---|---|
 | id | VARCHAR(191) | Tidak | cuid() | Primary key |
+| publicId | VARCHAR(32) | Ya | - | ID publik unik (format: TXN-TOP/PUR/AUD/REF/ADJ-YYMM-000001) |
 | userId | VARCHAR(191) | Tidak | - | FK ke User |
 | provider | ENUM(GOOGLE, DISCORD) | Tidak | - | Provider OAuth |
 | providerAccountId | VARCHAR(191) | Tidak | - | ID dari provider |
@@ -236,6 +275,7 @@ Ledger terpadu untuk semua mutasi saldo wallet. Setiap perubahan balance tercata
 | metadata | JSON | Ya | - | Data tambahan |
 | createdAt | DATETIME | Tidak | now() | Waktu transaksi |
 
+Unique: publicId
 Index: userId, type, (referenceType + referenceId), createdAt
 Relasi: userId → User.id (CASCADE)
 
@@ -248,6 +288,7 @@ Menyimpan order top-up yang dibuat via payment gateway. Status berubah dari PEND
 | Kolom | Tipe | Nullable | Default | Keterangan |
 |---|---|---|---|---|
 | id | VARCHAR(191) | Tidak | cuid() | Primary key |
+| publicId | VARCHAR(32) | Ya | - | ID publik unik (format: TOP-IDR-YYMM-000001) |
 | userId | VARCHAR(191) | Tidak | - | FK ke User |
 | provider | VARCHAR(64) | Tidak | - | Payment provider (bayar.gg) |
 | externalId | VARCHAR(191) | Ya | - | Invoice ID dari provider (unik) |
@@ -259,7 +300,7 @@ Menyimpan order top-up yang dibuat via payment gateway. Status berubah dari PEND
 | createdAt | DATETIME | Tidak | now() | Waktu dibuat |
 | updatedAt | DATETIME | Tidak | auto | Waktu update |
 
-Unique: externalId, activityLogId
+Unique: publicId, externalId, activityLogId
 Relasi: userId → User.id (CASCADE), activityLogId → ActivityLog.id (SET NULL)
 
 ---
@@ -271,6 +312,7 @@ Mencatat event penggunaan audio processing (untuk tracking dan billing).
 | Kolom | Tipe | Nullable | Default | Keterangan |
 |---|---|---|---|---|
 | id | VARCHAR(191) | Tidak | cuid() | Primary key |
+| publicId | VARCHAR(32) | Ya | - | ID publik unik (format: USE-FREE/PAID-YYMM-000001) |
 | userId | VARCHAR(191) | Tidak | - | FK ke User |
 | status | ENUM(PENDING, COMPLETED, FAILED, CANCELED) | Tidak | PENDING | Status event |
 | audioDurationSec | INTEGER | Tidak | - | Durasi audio dalam detik |
@@ -281,6 +323,7 @@ Mencatat event penggunaan audio processing (untuk tracking dan billing).
 | updatedAt | DATETIME | Tidak | auto | Waktu update |
 | completedAt | DATETIME | Ya | - | Waktu selesai |
 
+Unique: publicId
 Relasi: userId → User.id (CASCADE)
 
 ---
@@ -292,6 +335,7 @@ Log aktivitas pengguna untuk audit trail dan history.
 | Kolom | Tipe | Nullable | Default | Keterangan |
 |---|---|---|---|---|
 | id | VARCHAR(191) | Tidak | cuid() | Primary key |
+| publicId | VARCHAR(32) | Ya | - | ID publik unik (format: UPL-WAV/MP3/OGG-YYMM-000001) |
 | userId | VARCHAR(191) | Tidak | - | FK ke User |
 | type | ENUM(LOGIN, LOGOUT, TOP_UP, TOKEN_USAGE, AUDIO_EXPORT, AUDIO_UPLOAD, FAILED_ACTION, REFUND, ROLLBACK) | Tidak | - | Tipe aktivitas |
 | status | ENUM(INFO, SUCCESS, PENDING, FAILED) | Tidak | INFO | Status aktivitas |
@@ -327,6 +371,7 @@ Menyimpan record file audio yang di-upload pengguna dari studio.
 | createdAt | DATETIME | Tidak | now() | Waktu upload |
 | updatedAt | DATETIME | Tidak | auto | Waktu update |
 
+Unique: publicId
 Relasi: userId → User.id (CASCADE), activityLogId → ActivityLog.id (SET NULL)
 
 
@@ -359,6 +404,7 @@ Produk script yang dijual di store. Memiliki 3 tier harga (Personal, Commercial,
 | Kolom | Tipe | Nullable | Default | Keterangan |
 |---|---|---|---|---|
 | id | VARCHAR(191) | Tidak | cuid() | Primary key |
+| publicId | VARCHAR(32) | Ya | - | ID publik unik (format: PRD-AUD/RBX/SCR-YYMM-000001) |
 | categoryId | VARCHAR(191) | Ya | - | FK ke ProductCategory |
 | name | VARCHAR(191) | Tidak | - | Nama produk |
 | slug | VARCHAR(191) | Tidak | - | URL slug (unik) |
@@ -375,7 +421,7 @@ Produk script yang dijual di store. Memiliki 3 tier harga (Personal, Commercial,
 | createdAt | DATETIME | Tidak | now() | Waktu dibuat |
 | updatedAt | DATETIME | Tidak | auto | Waktu update |
 
-Unique: slug
+Unique: publicId, slug
 Relasi: categoryId → ProductCategory.id (SET NULL)
 
 ---
@@ -424,6 +470,7 @@ Lisensi yang dimiliki user setelah pembelian. Berisi license key untuk verifikas
 | Kolom | Tipe | Nullable | Default | Keterangan |
 |---|---|---|---|---|
 | id | VARCHAR(191) | Tidak | cuid() | Primary key |
+| publicId | VARCHAR(32) | Ya | - | ID publik unik untuk record lisensi (format: LIC-PER/COM/ENT-YYMM-000001) |
 | userId | VARCHAR(191) | Tidak | - | FK ke User (pemilik) |
 | productId | VARCHAR(191) | Tidak | - | FK ke Product |
 | purchaseId | VARCHAR(191) | Tidak | - | FK ke Purchase |
@@ -437,8 +484,10 @@ Lisensi yang dimiliki user setelah pembelian. Berisi license key untuk verifikas
 | createdAt | DATETIME | Tidak | now() | Waktu dibuat |
 | updatedAt | DATETIME | Tidak | auto | Waktu update |
 
-Unique: licenseKey
+Unique: publicId, licenseKey
 Relasi: userId → User.id (CASCADE), productId → Product.id (CASCADE), purchaseId → Purchase.id (CASCADE)
+
+Catatan: `publicId` berbeda dari `licenseKey`. `publicId` untuk UI/admin/support; `licenseKey` (RBXR-...) tetap dipakai runtime Roblox.
 
 Batas game per tier:
 - PERSONAL: 3 game
@@ -491,6 +540,7 @@ Record pembelian produk. Satu purchase menghasilkan satu license.
 | Kolom | Tipe | Nullable | Default | Keterangan |
 |---|---|---|---|---|
 | id | VARCHAR(191) | Tidak | cuid() | Primary key |
+| publicId | VARCHAR(32) | Ya | - | ID publik unik (format: PUR-PER/COM/ENT-YYMM-000001) |
 | userId | VARCHAR(191) | Tidak | - | FK ke User (pembeli) |
 | productId | VARCHAR(191) | Tidak | - | FK ke Product |
 | licenseType | ENUM(PERSONAL, COMMERCIAL, ENTERPRISE) | Tidak | - | Tier yang dibeli |
@@ -500,6 +550,7 @@ Record pembelian produk. Satu purchase menghasilkan satu license.
 | purchasedAt | DATETIME | Tidak | now() | Waktu pembelian |
 | updatedAt | DATETIME | Tidak | auto | Waktu update |
 
+Unique: publicId
 Relasi: userId → User.id (CASCADE), productId → Product.id (CASCADE)
 
 ---

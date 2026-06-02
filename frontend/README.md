@@ -81,6 +81,7 @@ npm start
 - ✅ Protected routes with middleware
 - ✅ Rupiah wallet display
 - ✅ User profile dropdown
+- ✅ Readable public IDs for account, transactions, purchases, licenses, products, and upload history
 
 ### Phase 2 (Planned)
 
@@ -115,6 +116,8 @@ All API calls go through the Express backend at `http://localhost:3001`:
 - `GET /history` - Get audio upload history
 - `GET /history/:id/download` - Download audio file
 - `POST /upload` - Upload processed audio
+
+Frontend displays `publicId` when backend responses include it and falls back to internal `id` for older rows. Examples: `ACC-IDN-2606-000001`, `TXN-PUR-2606-000001`, `LIC-COM-2606-000001`, `UPL-WAV-2606-000001`.
 
 ## Authentication Flow
 

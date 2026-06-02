@@ -115,6 +115,7 @@ Session-based via `connect.sid` cookie. Established through OAuth login flow (Go
   "uploads": [
     {
       "id": "cuid",
+      "publicId": "UPL-WAV-2606-000001",
       "fileName": "track.wav",
       "fileFormat": "wav",
       "status": "COMPLETED",
@@ -163,6 +164,7 @@ Session-based via `connect.sid` cookie. Established through OAuth login flow (Go
 {
   "ok": true,
   "orderId": "cuid",
+  "publicId": "TOP-IDR-2606-000001",
   "invoiceId": "INV-xxx",
   "amount": 50000,
   "paymentUrl": "https://bayar.gg/pay/...",
@@ -176,6 +178,7 @@ Session-based via `connect.sid` cookie. Established through OAuth login flow (Go
 ```json
 {
   "ok": true,
+  "publicId": "TOP-IDR-2606-000001",
   "paid": false,
   "status": "PENDING",
   "amount": 50000,
@@ -218,6 +221,7 @@ Session-based via `connect.sid` cookie. Established through OAuth login flow (Go
   "products": [
     {
       "id": "cuid",
+      "publicId": "PRD-SCR-2606-000001",
       "name": "Advanced UI System",
       "slug": "advanced-ui-system",
       "shortDesc": "Complete UI framework",
@@ -271,10 +275,10 @@ Session-based via `connect.sid` cookie. Established through OAuth login flow (Go
 {
   "ok": true,
   "purchases": [
-    { "id": "cuid", "productId": "cuid", "licenseType": "PERSONAL", "amountRupiah": 25000 }
+    { "id": "cuid", "publicId": "PUR-PER-2606-000001", "productId": "cuid", "licenseType": "PERSONAL", "amountRupiah": 25000 }
   ],
   "licenses": [
-    { "id": "cuid", "productId": "cuid", "licenseKey": "RBXR-A1B2-C3D4-E5F6-G7H8", "licenseType": "PERSONAL", "maxGames": 3 }
+    { "id": "cuid", "publicId": "LIC-PER-2606-000001", "productId": "cuid", "licenseKey": "RBXR-A1B2-C3D4-E5F6-G7H8", "licenseType": "PERSONAL", "maxGames": 3 }
   ],
   "totalCharged": 25000,
   "newBalance": 75000
