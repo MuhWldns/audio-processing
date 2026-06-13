@@ -1,5 +1,6 @@
 import { prisma } from "../prisma.js";
 import { createBayarPayment, verifyBayarWebhookSignature } from "../services/bayarService.js";
+import { createMustikaQris, checkMustikaStatus } from "../services/mustikaService.js";
 import { sendTopUpSuccessEmail } from "../services/emailService.js";
 import { generatePublicId } from "../services/publicIdService.js";
 
@@ -7,6 +8,9 @@ const MIN_TOPUP_AMOUNT = 1000;
 const MAX_QRIS_AMOUNT = 500000;
 const PAYMENT_METHOD = "qris";
 const PROVIDER_NAME = "bayar.gg";
+const MUSTIKA_PROVIDER = "mustika";
+const MUSTIKA_EXPIRY_MIN = 20;
+const getTopUpProvider = () => (process.env.TOPUP_PROVIDER || "bayar.gg").trim();
 
 const getWebhookUrl = () => {
   const value = process.env.BAYARGG_WEBHOOK_URL ? process.env.BAYARGG_WEBHOOK_URL.trim() : "";
@@ -46,31 +50,54 @@ export const handleCreateTopUp = async (req, res) => {
     return res.status(400).json({ error: "Amount exceeds QRIS limit" });
   }
 
-  const webhookUrl = getWebhookUrl();
-  if (!webhookUrl) {
-    return res.status(500).json({ error: "Webhook URL not configured" });
-  }
-
   const customerName = req.body?.customer_name;
   const customerEmail = req.body?.customer_email;
   const customerPhone = req.body?.customer_phone;
+  const provider = getTopUpProvider();
 
-  const paymentData = await createBayarPayment({
-    amount,
-    description: `Top up Rp ${amount.toLocaleString("id-ID")}`,
-    customerName,
-    customerEmail,
-    customerPhone,
-    callbackUrl: webhookUrl,
-    paymentMethod: PAYMENT_METHOD,
-  });
+  let externalId;
+  let providerName;
+  let metadata;
 
-  const invoiceId = paymentData?.data?.invoice_id;
-  if (!invoiceId) {
-    return res.status(502).json({ error: "Payment gateway did not return invoice ID" });
+  if (provider === MUSTIKA_PROVIDER) {
+    const redirectUrl = `${process.env.FRONTEND_URL || ""}/topup`;
+    const payment = await createMustikaQris({
+      amount,
+      productName: `Top up Rp ${amount.toLocaleString("id-ID")}`,
+      customerName,
+      expiry: MUSTIKA_EXPIRY_MIN,
+      redirectUrl,
+    });
+    const expiresAt = new Date(Date.now() + MUSTIKA_EXPIRY_MIN * 60 * 1000).toISOString();
+    externalId = payment.refNo;
+    providerName = MUSTIKA_PROVIDER;
+    metadata = {
+      qrUrl: payment.qrUrl,
+      paymentLink: payment.paymentLink,
+      expiresAt,
+    };
+  } else {
+    const webhookUrl = getWebhookUrl();
+    if (!webhookUrl) {
+      return res.status(500).json({ error: "Webhook URL not configured" });
+    }
+    const paymentData = await createBayarPayment({
+      amount,
+      description: `Top up Rp ${amount.toLocaleString("id-ID")}`,
+      customerName,
+      customerEmail,
+      customerPhone,
+      callbackUrl: webhookUrl,
+      paymentMethod: PAYMENT_METHOD,
+    });
+    const invoiceId = paymentData?.data?.invoice_id;
+    if (!invoiceId) {
+      return res.status(502).json({ error: "Payment gateway did not return invoice ID" });
+    }
+    externalId = invoiceId;
+    providerName = PROVIDER_NAME;
+    metadata = buildTopUpMetadata(paymentData);
   }
-
-  const metadata = buildTopUpMetadata(paymentData);
 
   const order = await prisma.$transaction(async (tx) => {
     const publicId = await generatePublicId(tx, "TOP", "IDR");
@@ -78,10 +105,10 @@ export const handleCreateTopUp = async (req, res) => {
       data: {
         publicId,
         userId: req.user.id,
-        provider: PROVIDER_NAME,
-        externalId: invoiceId,
+        provider: providerName,
+        externalId,
         amountRupiah: amount,
-        finalAmount: paymentData?.data?.final_amount ? Number(paymentData.data.final_amount) : null,
+        finalAmount: null,
         status: "PENDING",
         metadata,
       },
@@ -92,10 +119,10 @@ export const handleCreateTopUp = async (req, res) => {
     ok: true,
     orderId: order.id,
     publicId: order.publicId,
-    invoiceId,
+    invoiceId: externalId,
     amount,
-    paymentUrl: metadata.paymentUrl,
-    qrisImageUrl: metadata.qrisImageUrl,
+    paymentUrl: metadata.paymentLink || metadata.paymentUrl,
+    qrisImageUrl: metadata.qrUrl || metadata.qrisImageUrl,
     expiresAt: metadata.expiresAt,
   });
 };

@@ -35,6 +35,18 @@ vi.mock("../../src/services/bayarService.js", () => ({
   }),
 }));
 
+// Mock mustikaService
+vi.mock("../../src/services/mustikaService.js", () => ({
+  createMustikaQris: vi.fn().mockResolvedValue({
+    refNo: "QR-TEST-1",
+    qrUrl: "https://mustikapayment.com/api/qr?data=000201&ref_no=QR-TEST-1",
+    paymentLink: "https://mustikapayment.com/pay/QR-TEST-1",
+    amount: 50000,
+  }),
+  checkMustikaStatus: vi.fn(),
+  getMustikaConfig: vi.fn().mockReturnValue({ apiKey: "MP-test", baseUrl: "https://mustikapayment.com" }),
+}));
+
 function buildApp(user = mockUser) {
   return createTestApp((app, { requireAuth }) => {
     app.post("/topup/create", requireAuth, handleCreateTopUp);
@@ -117,6 +129,44 @@ describe("Top-up Routes", () => {
           publicId: expect.stringMatching(/^TOP-IDR-\d{4}-000001$/),
         }),
       }));
+    });
+  });
+
+  describe("POST /topup/create with TOPUP_PROVIDER=mustika", () => {
+    it("creates a MustikaPay QRIS order and returns mapped fields", async () => {
+      const prev = process.env.TOPUP_PROVIDER;
+      process.env.TOPUP_PROVIDER = "mustika";
+
+      prisma.publicIdCounter.upsert.mockResolvedValue({ scope: "TOP-IDR-2606", nextNumber: 2 });
+      prisma.topUpOrder.create.mockResolvedValue({
+        id: "order-m1",
+        publicId: "TOP-IDR-2606-000002",
+        userId: mockUser.id,
+        provider: "mustika",
+        externalId: "QR-TEST-1",
+        amountRupiah: 50000,
+        status: "PENDING",
+        metadata: {
+          qrUrl: "https://mustikapayment.com/api/qr?data=000201&ref_no=QR-TEST-1",
+          paymentLink: "https://mustikapayment.com/pay/QR-TEST-1",
+        },
+      });
+
+      const app = buildApp();
+      const res = await request(app).post("/topup/create").send({ amount: 50000 });
+
+      expect(res.status).toBe(201);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.invoiceId).toBe("QR-TEST-1");
+      expect(res.body.qrisImageUrl).toBe("https://mustikapayment.com/api/qr?data=000201&ref_no=QR-TEST-1");
+      expect(res.body.paymentUrl).toBe("https://mustikapayment.com/pay/QR-TEST-1");
+      expect(res.body.expiresAt).toBeTruthy();
+
+      const createArg = prisma.topUpOrder.create.mock.calls[0][0];
+      expect(createArg.data.provider).toBe("mustika");
+      expect(createArg.data.externalId).toBe("QR-TEST-1");
+
+      process.env.TOPUP_PROVIDER = prev;
     });
   });
 
