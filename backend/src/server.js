@@ -160,6 +160,17 @@ const topupLimiter = createUploadLimiter({
   maxRequests: 5,
 });
 
+// Rate limiter for top-up status checks (per-user, not per-IP, so users behind a
+// shared NAT don't block each other). Generous enough for the 3s frontend poll
+// plus the "Saya sudah bayar" button, but caps hammering that would trigger
+// repeated outbound MustikaPay calls / credit writes.
+const topupStatusLimiter = createUploadLimiter({
+  windowMinutes: 1,
+  maxRequests: 40,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: { error: "Too many status checks, please slow down." },
+});
+
 // Memory-based multer for admin file uploads (goes to B2, not local disk)
 const adminFileUpload = multer({
   storage: multer.memoryStorage(),
@@ -219,7 +230,7 @@ app.put("/user/roblox-id", requireAuth, handleSetRobloxUserId);
 
 // Top up routes
 app.post("/topup/create", requireAuth, topupLimiter, validate(createTopUpSchema), asyncHandler(handleCreateTopUp));
-app.get("/topup/status/:reference", requireAuth, asyncHandler(handleGetTopUpStatus));
+app.get("/topup/status/:reference", requireAuth, topupStatusLimiter, asyncHandler(handleGetTopUpStatus));
 app.post("/webhooks/bayar", asyncHandler(handleBayarWebhook));
 
 // Health check routes
