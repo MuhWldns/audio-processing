@@ -172,7 +172,7 @@ export const handleBayarWebhook = async (req, res) => {
     };
 
     const result = await creditTopUpOrder(order.id, {
-      confirmedAmount: order.amountRupiah,
+      finalAmount: req.body?.final_amount != null ? Number(req.body.final_amount) : undefined,
       providerName: PROVIDER_NAME,
       paymentMeta,
     });
@@ -234,20 +234,21 @@ export const handleGetTopUpStatus = async (req, res) => {
   if (status === "PENDING" && order.provider === MUSTIKA_PROVIDER) {
     const ageMs = Date.now() - new Date(order.createdAt).getTime();
     if (ageMs > MUSTIKA_EXPIRY_MS) {
-      await prisma.topUpOrder.update({ where: { id: order.id }, data: { status: "CANCELED" } });
+      await prisma.topUpOrder.updateMany({ where: { id: order.id, status: "PENDING" }, data: { status: "CANCELED" } });
       status = "CANCELED";
     } else {
       try {
         const check = await checkMustikaStatus(order.externalId);
         if (check.status === "success") {
           await creditTopUpOrder(order.id, {
-            confirmedAmount: order.amountRupiah,
+            verifyAmount: check.amount,
+            finalAmount: check.amount,
             providerName: MUSTIKA_PROVIDER,
             paymentMeta: { ref_no: order.externalId, checkedVia: "status-endpoint" },
           });
           status = "COMPLETED";
         } else if (check.status === "expired") {
-          await prisma.topUpOrder.update({ where: { id: order.id }, data: { status: "CANCELED" } });
+          await prisma.topUpOrder.updateMany({ where: { id: order.id, status: "PENDING" }, data: { status: "CANCELED" } });
           status = "CANCELED";
         }
       } catch (err) {

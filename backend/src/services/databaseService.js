@@ -201,25 +201,33 @@ export async function adminAdjustBalance(userId, amount, reason) {
  * Shared by Bayar.gg webhook, MustikaPay poller, and status endpoint.
  * @param {string} orderId
  * @param {Object} opts
- * @param {number} opts.confirmedAmount - amount confirmed by the provider (must match order.amountRupiah)
+ * @param {number} [opts.verifyAmount] - provider-reported amount; if a number, MUST equal order.amountRupiah or this throws. Undefined skips verification (Bayar.gg trusts HMAC).
+ * @param {number} [opts.finalAmount] - amount actually charged by the gateway, recorded to order.finalAmount. Defaults to order.amountRupiah.
  * @param {string} [opts.providerName="bayar.gg"]
  * @param {Object} [opts.paymentMeta] - extra metadata to store on the order/ledger
  * @returns {Promise<{credited:boolean, alreadyProcessed?:boolean, notFound?:boolean, userId?:string, amount?:number}>}
  */
-export async function creditTopUpOrder(orderId, { confirmedAmount, providerName = "bayar.gg", paymentMeta = {} } = {}) {
+export async function creditTopUpOrder(orderId, { verifyAmount, finalAmount, providerName = "bayar.gg", paymentMeta = {} } = {}) {
   return await prisma.$transaction(async (tx) => {
     const order = await tx.topUpOrder.findUnique({ where: { id: orderId } });
     if (!order) return { credited: false, notFound: true };
     if (order.status === "COMPLETED") return { credited: false, alreadyProcessed: true, userId: order.userId };
 
-    if (typeof confirmedAmount === "number" && confirmedAmount !== order.amountRupiah) {
-      throw new Error(`Top-up amount mismatch: confirmed ${confirmedAmount} != order ${order.amountRupiah}`);
+    // Verify BEFORE claiming, so a mismatched order is never claimed/credited.
+    if (typeof verifyAmount === "number" && verifyAmount !== order.amountRupiah) {
+      throw new Error(`Top-up amount mismatch: provider ${verifyAmount} != order ${order.amountRupiah}`);
+    }
+
+    // Atomic compare-and-swap claim: only one concurrent tx wins the PENDING->COMPLETED flip.
+    const claim = await tx.topUpOrder.updateMany({
+      where: { id: order.id, status: "PENDING" },
+      data: { status: "COMPLETED" },
+    });
+    if (claim.count === 0) {
+      return { credited: false, alreadyProcessed: true, userId: order.userId };
     }
 
     const amount = order.amountRupiah;
-
-    // Lock: mark COMPLETED first to prevent race / double-credit
-    await tx.topUpOrder.update({ where: { id: order.id }, data: { status: "COMPLETED" } });
 
     const user = await tx.user.update({
       where: { id: order.userId },
@@ -254,10 +262,11 @@ export async function creditTopUpOrder(orderId, { confirmedAmount, providerName 
       },
     });
 
+    // Status already flipped to COMPLETED in the claim step; only record finalAmount + metadata.
     await tx.topUpOrder.update({
       where: { id: order.id },
       data: {
-        finalAmount: typeof confirmedAmount === "number" ? confirmedAmount : amount,
+        finalAmount: typeof finalAmount === "number" ? finalAmount : amount,
         metadata: { ...(order.metadata || {}), ...paymentMeta },
       },
     });

@@ -243,6 +243,7 @@ describe("Top-up Routes", () => {
         metadata: {},
       });
       prisma.topUpOrder.update.mockResolvedValue({});
+      prisma.topUpOrder.updateMany.mockResolvedValue({ count: 1 });
       prisma.user.update.mockResolvedValue({ walletBalance: 150000 });
       prisma.walletTransaction.create.mockResolvedValue({ id: "wallet-transaction-1" });
       prisma.activityLog.create.mockResolvedValue({ id: "activity-1" });
@@ -295,6 +296,7 @@ describe("Top-up Routes", () => {
         id: "order-m1", userId: mockUser.id, amountRupiah: 50000, status: "PENDING", metadata: {},
       });
       prisma.topUpOrder.update.mockResolvedValue({});
+      prisma.topUpOrder.updateMany.mockResolvedValue({ count: 1 });
       prisma.user.update.mockResolvedValue({ walletBalance: 150000 });
       prisma.publicIdCounter.upsert.mockResolvedValue({ scope: "TXN-TOP-2606", nextNumber: 2 });
       prisma.walletTransaction.create.mockResolvedValue({ id: "wt-1" });
@@ -325,16 +327,50 @@ describe("Top-up Routes", () => {
         createdAt: new Date(Date.now() - 21 * 60 * 1000),
         updatedAt: new Date(Date.now() - 21 * 60 * 1000),
       });
-      prisma.topUpOrder.update.mockResolvedValue({});
+      prisma.topUpOrder.updateMany.mockResolvedValue({ count: 1 });
 
       const app = buildApp();
       const res = await request(app).get("/topup/status/order-old");
 
       expect(res.status).toBe(200);
       expect(res.body.status).toBe("CANCELED");
-      expect(prisma.topUpOrder.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: "CANCELED" }) })
+      expect(prisma.topUpOrder.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: "PENDING" }),
+          data: expect.objectContaining({ status: "CANCELED" }),
+        })
       );
+    });
+
+    it("leaves a mustika order PENDING and does not credit when reported amount mismatches", async () => {
+      const { checkMustikaStatus } = await import("../../src/services/mustikaService.js");
+      checkMustikaStatus.mockResolvedValue({ status: "success", amount: 99999 });
+
+      prisma.topUpOrder.findFirst.mockResolvedValue({
+        id: "order-mismatch",
+        publicId: "TOP-IDR-2606-000009",
+        provider: "mustika",
+        externalId: "QR-MISMATCH",
+        status: "PENDING",
+        amountRupiah: 50000,
+        finalAmount: null,
+        metadata: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      // creditTopUpOrder re-reads the order, then throws on the amount mismatch.
+      prisma.topUpOrder.findUnique.mockResolvedValue({
+        id: "order-mismatch", userId: mockUser.id, amountRupiah: 50000, status: "PENDING", metadata: {},
+      });
+      prisma.topUpOrder.updateMany.mockResolvedValue({ count: 1 });
+
+      const app = buildApp();
+      const res = await request(app).get("/topup/status/order-mismatch");
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("PENDING");
+      expect(res.body.paid).toBe(false);
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
 
     it("returns enriched QRIS fields for a pending order", async () => {

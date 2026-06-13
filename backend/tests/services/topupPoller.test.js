@@ -48,7 +48,7 @@ describe("pollPendingMustikaOrders", () => {
     const result = await pollPendingMustikaOrders();
 
     expect(checkMustikaStatus).toHaveBeenCalledWith("QR1");
-    expect(creditSpy).toHaveBeenCalledWith("o1", expect.objectContaining({ confirmedAmount: 10000 }));
+    expect(creditSpy).toHaveBeenCalledWith("o1", expect.objectContaining({ verifyAmount: 10000, finalAmount: 10000 }));
     expect(result.checked).toBe(1);
     creditSpy.mockRestore();
   });
@@ -59,12 +59,12 @@ describe("pollPendingMustikaOrders", () => {
       { id: "old", externalId: "QR-OLD", amountRupiah: 10000, createdAt: new Date(Date.now() - 21 * 60 * 1000), metadata: {} },
     ]);
     checkMustikaStatus.mockResolvedValue({ status: "pending" });
-    prisma.topUpOrder.update.mockResolvedValue({});
+    prisma.topUpOrder.updateMany.mockResolvedValue({ count: 1 });
 
     await pollPendingMustikaOrders();
 
-    expect(prisma.topUpOrder.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "old" }, data: expect.objectContaining({ status: "CANCELED" }) })
+    expect(prisma.topUpOrder.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "old", status: "PENDING" }, data: expect.objectContaining({ status: "CANCELED" }) })
     );
   });
 

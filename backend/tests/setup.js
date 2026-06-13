@@ -29,6 +29,7 @@ vi.mock("../src/prisma.js", () => {
     findMany: vi.fn().mockResolvedValue([]),
     create: vi.fn().mockResolvedValue({ id: "mock-id" }),
     update: vi.fn().mockResolvedValue({ id: "mock-id" }),
+    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     delete: vi.fn().mockResolvedValue({ id: "mock-id" }),
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     count: vi.fn().mockResolvedValue(0),

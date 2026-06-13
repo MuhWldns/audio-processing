@@ -33,12 +33,13 @@ export async function pollPendingMustikaOrders() {
       const check = await checkMustikaStatus(order.externalId);
       if (check.status === "success") {
         await creditTopUpOrder(order.id, {
-          confirmedAmount: order.amountRupiah,
+          verifyAmount: check.amount,
+          finalAmount: check.amount,
           providerName: MUSTIKA_PROVIDER,
           paymentMeta: { ref_no: order.externalId, checkedVia: "poller" },
         });
       } else if (check.status === "expired" || isExpired) {
-        await prisma.topUpOrder.update({ where: { id: order.id }, data: { status: "CANCELED" } });
+        await prisma.topUpOrder.updateMany({ where: { id: order.id, status: "PENDING" }, data: { status: "CANCELED" } });
       }
     } catch (err) {
       console.error(`[poller] order ${order.id} check failed:`, err.message);
