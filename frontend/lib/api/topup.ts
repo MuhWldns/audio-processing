@@ -17,10 +17,14 @@ export type TopUpResponse = {
 
 export type TopUpStatusResponse = {
   ok: boolean;
+  publicId?: string;
   paid: boolean;
   status: "PENDING" | "COMPLETED" | "FAILED" | "CANCELED";
   amount: number;
   finalAmount: number | null;
+  qrisImageUrl?: string | null;
+  paymentUrl?: string | null;
+  expiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };
