@@ -765,6 +765,12 @@ Konfirmasi pembayaran:
 Keamanan: kredit wallet selalu lewat creditTopUpOrder — atomic (satu transaction), idempotent
 (tidak double-credit), dan menolak bila nominal terkonfirmasi tidak cocok dengan order.
 
+> **Catatan — RBX Credit non-refundable.** Saldo wallet adalah **RBX Credit**, bukan Rupiah
+> dalam arti uang yang bisa dicairkan. Nominal Rupiah saat top-up hanya menentukan jumlah RBX
+> Credit yang diterima; setelah masuk, RBX Credit **tidak dapat di-refund, ditarik, atau
+> ditukar kembali ke Rupiah**. Credit hanya bisa dipakai untuk pembelian di dalam platform.
+> Pastikan UI top-up dan checkout menyatakan ini dengan jelas agar user paham sebelum membayar.
+
 ### 6.3 Alur Pembelian Script
 
 Pembelian script menggunakan saldo wallet (Rupiah). User harus top-up terlebih dahulu jika saldo tidak mencukupi.
