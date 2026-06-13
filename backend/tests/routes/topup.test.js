@@ -313,7 +313,8 @@ describe("Top-up Routes", () => {
 
     it("auto-cancels a mustika order older than 20 minutes without crediting", async () => {
       const { checkMustikaStatus } = await import("../../src/services/mustikaService.js");
-      checkMustikaStatus.mockReset();
+      // Cancel now requires a provider check first; provider reports still-unpaid.
+      checkMustikaStatus.mockResolvedValue({ status: "pending" });
 
       prisma.topUpOrder.findFirst.mockResolvedValue({
         id: "order-old",
@@ -340,6 +341,43 @@ describe("Top-up Routes", () => {
           data: expect.objectContaining({ status: "CANCELED" }),
         })
       );
+    });
+
+    it("credits an OLD pending mustika order (>20 min) when the provider reports success", async () => {
+      // Lost-payment regression guard: a late payment must be credited, not silently canceled.
+      const { checkMustikaStatus } = await import("../../src/services/mustikaService.js");
+      checkMustikaStatus.mockResolvedValue({ status: "success", amount: 50000 });
+
+      prisma.topUpOrder.findFirst.mockResolvedValue({
+        id: "order-late",
+        publicId: "TOP-IDR-2606-000010",
+        provider: "mustika",
+        externalId: "QR-LATE",
+        status: "PENDING",
+        amountRupiah: 50000,
+        finalAmount: null,
+        metadata: {},
+        createdAt: new Date(Date.now() - 21 * 60 * 1000),
+        updatedAt: new Date(Date.now() - 21 * 60 * 1000),
+      });
+      prisma.topUpOrder.findUnique.mockResolvedValue({
+        id: "order-late", userId: mockUser.id, amountRupiah: 50000, status: "PENDING", metadata: {},
+      });
+      prisma.topUpOrder.update.mockResolvedValue({});
+      prisma.topUpOrder.updateMany.mockResolvedValue({ count: 1 });
+      prisma.user.update.mockResolvedValue({ walletBalance: 150000 });
+      prisma.publicIdCounter.upsert.mockResolvedValue({ scope: "TXN-TOP-2606", nextNumber: 2 });
+      prisma.walletTransaction.create.mockResolvedValue({ id: "wt-1" });
+      prisma.activityLog.create.mockResolvedValue({ id: "al-1" });
+
+      const app = buildApp();
+      const res = await request(app).get("/topup/status/order-late");
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("COMPLETED");
+      expect(res.body.paid).toBe(true);
+      expect(checkMustikaStatus).toHaveBeenCalledWith("QR-LATE");
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
     });
 
     it("leaves a mustika order PENDING and does not credit when reported amount mismatches", async () => {

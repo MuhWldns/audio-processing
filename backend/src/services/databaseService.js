@@ -201,21 +201,25 @@ export async function adminAdjustBalance(userId, amount, reason) {
  * Shared by Bayar.gg webhook, MustikaPay poller, and status endpoint.
  * @param {string} orderId
  * @param {Object} opts
- * @param {number} [opts.verifyAmount] - provider-reported amount; if a number, MUST equal order.amountRupiah or this throws. Undefined skips verification (Bayar.gg trusts HMAC).
+ * @param {number} [opts.verifyAmount] - provider-reported amount. Only checked when requireAmountMatch is true.
+ * @param {boolean} [opts.requireAmountMatch=false] - when true (untrusted providers like MustikaPay), verifyAmount MUST be a finite number equal to order.amountRupiah or this throws (fail-closed). When false (Bayar.gg trusts HMAC), no amount check is performed.
  * @param {number} [opts.finalAmount] - amount actually charged by the gateway, recorded to order.finalAmount. Defaults to order.amountRupiah.
  * @param {string} [opts.providerName="bayar.gg"]
  * @param {Object} [opts.paymentMeta] - extra metadata to store on the order/ledger
  * @returns {Promise<{credited:boolean, alreadyProcessed?:boolean, notFound?:boolean, userId?:string, amount?:number}>}
  */
-export async function creditTopUpOrder(orderId, { verifyAmount, finalAmount, providerName = "bayar.gg", paymentMeta = {} } = {}) {
+export async function creditTopUpOrder(orderId, { verifyAmount, requireAmountMatch = false, finalAmount, providerName = "bayar.gg", paymentMeta = {} } = {}) {
   return await prisma.$transaction(async (tx) => {
     const order = await tx.topUpOrder.findUnique({ where: { id: orderId } });
     if (!order) return { credited: false, notFound: true };
     if (order.status === "COMPLETED") return { credited: false, alreadyProcessed: true, userId: order.userId };
 
     // Verify BEFORE claiming, so a mismatched order is never claimed/credited.
-    if (typeof verifyAmount === "number" && verifyAmount !== order.amountRupiah) {
-      throw new Error(`Top-up amount mismatch: provider ${verifyAmount} != order ${order.amountRupiah}`);
+    // Fail-closed for untrusted providers: verifyAmount must be a finite number that matches.
+    if (requireAmountMatch) {
+      if (!Number.isFinite(verifyAmount) || verifyAmount !== order.amountRupiah) {
+        throw new Error(`Top-up amount verification failed: provider ${verifyAmount} != order ${order.amountRupiah}`);
+      }
     }
 
     // Atomic compare-and-swap claim: only one concurrent tx wins the PENDING->COMPLETED flip.

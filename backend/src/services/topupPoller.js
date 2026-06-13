@@ -34,6 +34,7 @@ export async function pollPendingMustikaOrders() {
       if (check.status === "success") {
         await creditTopUpOrder(order.id, {
           verifyAmount: check.amount,
+          requireAmountMatch: true,
           finalAmount: check.amount,
           providerName: MUSTIKA_PROVIDER,
           paymentMeta: { ref_no: order.externalId, checkedVia: "poller" },

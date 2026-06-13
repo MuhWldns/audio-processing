@@ -96,6 +96,25 @@ describe("mustikaService", () => {
       expect(opts.headers["X-Api-Key"]).toBe("MP-test-key");
     });
 
+    it("coerces a string amount to a number", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ ref_no: "QR123", status: "success", amount: "50000" }),
+      });
+      const result = await checkMustikaStatus("QR123");
+      expect(result.amount).toBe(50000);
+      expect(typeof result.amount).toBe("number");
+    });
+
+    it("returns undefined amount when provider omits it", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ ref_no: "QR123", status: "pending" }),
+      });
+      const result = await checkMustikaStatus("QR123");
+      expect(result.amount).toBeUndefined();
+    });
+
     it("url-encodes the ref_no", async () => {
       const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue({
         ok: true,

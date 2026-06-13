@@ -233,28 +233,25 @@ export const handleGetTopUpStatus = async (req, res) => {
   // Active confirmation for pending MustikaPay orders (no trusted webhook)
   if (status === "PENDING" && order.provider === MUSTIKA_PROVIDER) {
     const ageMs = Date.now() - new Date(order.createdAt).getTime();
-    if (ageMs > MUSTIKA_EXPIRY_MS) {
-      await prisma.topUpOrder.updateMany({ where: { id: order.id, status: "PENDING" }, data: { status: "CANCELED" } });
-      status = "CANCELED";
-    } else {
-      try {
-        const check = await checkMustikaStatus(order.externalId);
-        if (check.status === "success") {
-          await creditTopUpOrder(order.id, {
-            verifyAmount: check.amount,
-            finalAmount: check.amount,
-            providerName: MUSTIKA_PROVIDER,
-            paymentMeta: { ref_no: order.externalId, checkedVia: "status-endpoint" },
-          });
-          status = "COMPLETED";
-        } else if (check.status === "expired") {
-          await prisma.topUpOrder.updateMany({ where: { id: order.id, status: "PENDING" }, data: { status: "CANCELED" } });
-          status = "CANCELED";
-        }
-      } catch (err) {
-        console.error("[topup] MustikaPay status check failed:", err.message);
-        // leave as PENDING; next poll / button retry will reconcile
+    try {
+      const check = await checkMustikaStatus(order.externalId);
+      if (check.status === "success") {
+        await creditTopUpOrder(order.id, {
+          verifyAmount: check.amount,
+          requireAmountMatch: true,
+          finalAmount: check.amount,
+          providerName: MUSTIKA_PROVIDER,
+          paymentMeta: { ref_no: order.externalId, checkedVia: "status-endpoint" },
+        });
+        status = "COMPLETED";
+      } else if (check.status === "expired" || ageMs > MUSTIKA_EXPIRY_MS) {
+        await prisma.topUpOrder.updateMany({ where: { id: order.id, status: "PENDING" }, data: { status: "CANCELED" } });
+        status = "CANCELED";
       }
+      // otherwise (pending and within window): stay PENDING
+    } catch (err) {
+      console.error("[topup] MustikaPay status check failed:", err.message);
+      // leave as PENDING; next poll / button retry will reconcile
     }
   }
 

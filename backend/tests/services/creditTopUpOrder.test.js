@@ -59,12 +59,41 @@ describe("creditTopUpOrder", () => {
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
-  it("rejects when confirmed amount does not match order amount", async () => {
+  it("rejects when confirmed amount does not match order amount (requireAmountMatch)", async () => {
     prisma.topUpOrder.findUnique.mockResolvedValue({ ...baseOrder });
-    await expect(creditTopUpOrder("order-1", { verifyAmount: 5000 }))
-      .rejects.toThrow(/amount mismatch/i);
+    await expect(creditTopUpOrder("order-1", { verifyAmount: 5000, requireAmountMatch: true }))
+      .rejects.toThrow(/amount verification failed/i);
     expect(prisma.user.update).not.toHaveBeenCalled();
     expect(prisma.topUpOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when requireAmountMatch and verifyAmount is undefined", async () => {
+    prisma.topUpOrder.findUnique.mockResolvedValue({ ...baseOrder });
+    await expect(creditTopUpOrder("order-1", { verifyAmount: undefined, requireAmountMatch: true }))
+      .rejects.toThrow(/amount verification failed/i);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(prisma.topUpOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when requireAmountMatch and verifyAmount is NaN", async () => {
+    prisma.topUpOrder.findUnique.mockResolvedValue({ ...baseOrder });
+    await expect(creditTopUpOrder("order-1", { verifyAmount: NaN, requireAmountMatch: true }))
+      .rejects.toThrow(/amount verification failed/i);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(prisma.topUpOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("credits once when requireAmountMatch and verifyAmount equals order amount", async () => {
+    prisma.topUpOrder.findUnique.mockResolvedValue({ ...baseOrder });
+    prisma.topUpOrder.update.mockResolvedValue({});
+    prisma.user.update.mockResolvedValue({ walletBalance: 110000 });
+    prisma.publicIdCounter.upsert.mockResolvedValue({ scope: "TXN-TOP-2606", nextNumber: 2 });
+    prisma.walletTransaction.create.mockResolvedValue({ id: "wt-1" });
+    prisma.activityLog.create.mockResolvedValue({ id: "al-1" });
+
+    const result = await creditTopUpOrder("order-1", { verifyAmount: 10000, requireAmountMatch: true, finalAmount: 10000 });
+    expect(result.credited).toBe(true);
+    expect(prisma.user.update).toHaveBeenCalledTimes(1);
   });
 
   it("returns credited:false when order not found", async () => {

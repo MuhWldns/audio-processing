@@ -73,5 +73,6 @@ export const checkMustikaStatus = async (refNo) => {
   }
 
   const data = await response.json();
-  return { status: data.status, amount: data.amount, raw: data };
+  const amount = data.amount == null ? undefined : Number(data.amount);
+  return { status: data.status, amount, raw: data };
 };
