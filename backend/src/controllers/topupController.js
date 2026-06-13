@@ -1,6 +1,7 @@
 import { prisma } from "../prisma.js";
 import { createBayarPayment, verifyBayarWebhookSignature } from "../services/bayarService.js";
 import { createMustikaQris, checkMustikaStatus } from "../services/mustikaService.js";
+import { creditTopUpOrder } from "../services/databaseService.js";
 import { sendTopUpSuccessEmail } from "../services/emailService.js";
 import { generatePublicId } from "../services/publicIdService.js";
 
@@ -10,6 +11,7 @@ const PAYMENT_METHOD = "qris";
 const PROVIDER_NAME = "bayar.gg";
 const MUSTIKA_PROVIDER = "mustika";
 const MUSTIKA_EXPIRY_MIN = 20;
+const MUSTIKA_EXPIRY_MS = 20 * 60 * 1000;
 const getTopUpProvider = () => (process.env.TOPUP_PROVIDER || "bayar.gg").trim();
 
 const getWebhookUrl = () => {
@@ -270,17 +272,17 @@ export const handleGetTopUpStatus = async (req, res) => {
   const order = await prisma.topUpOrder.findFirst({
     where: {
       userId: req.user.id,
-      OR: [
-        { id: reference },
-        { externalId: reference },
-      ],
+      OR: [{ id: reference }, { externalId: reference }],
     },
-      select: {
-        id: true,
-        publicId: true,
-        status: true,
+    select: {
+      id: true,
+      publicId: true,
+      provider: true,
+      externalId: true,
+      status: true,
       amountRupiah: true,
       finalAmount: true,
+      metadata: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -290,13 +292,46 @@ export const handleGetTopUpStatus = async (req, res) => {
     return res.status(404).json({ error: "Order not found" });
   }
 
+  let status = order.status;
+
+  // Active confirmation for pending MustikaPay orders (no trusted webhook)
+  if (status === "PENDING" && order.provider === MUSTIKA_PROVIDER) {
+    const ageMs = Date.now() - new Date(order.createdAt).getTime();
+    if (ageMs > MUSTIKA_EXPIRY_MS) {
+      await prisma.topUpOrder.update({ where: { id: order.id }, data: { status: "CANCELED" } });
+      status = "CANCELED";
+    } else {
+      try {
+        const check = await checkMustikaStatus(order.externalId);
+        if (check.status === "success") {
+          await creditTopUpOrder(order.id, {
+            confirmedAmount: order.amountRupiah,
+            providerName: MUSTIKA_PROVIDER,
+            paymentMeta: { ref_no: order.externalId, checkedVia: "status-endpoint" },
+          });
+          status = "COMPLETED";
+        } else if (check.status === "expired") {
+          await prisma.topUpOrder.update({ where: { id: order.id }, data: { status: "CANCELED" } });
+          status = "CANCELED";
+        }
+      } catch (err) {
+        console.error("[topup] MustikaPay status check failed:", err.message);
+        // leave as PENDING; next poll / button retry will reconcile
+      }
+    }
+  }
+
+  const meta = order.metadata || {};
   return res.status(200).json({
     ok: true,
     publicId: order.publicId,
-    paid: order.status === "COMPLETED",
-    status: order.status,
+    paid: status === "COMPLETED",
+    status,
     amount: order.amountRupiah,
     finalAmount: order.finalAmount,
+    qrisImageUrl: meta.qrUrl || meta.qrisImageUrl || null,
+    paymentUrl: meta.paymentLink || meta.paymentUrl || null,
+    expiresAt: meta.expiresAt || null,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
   });

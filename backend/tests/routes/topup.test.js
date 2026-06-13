@@ -272,4 +272,95 @@ describe("Top-up Routes", () => {
       });
     });
   });
+
+  describe("GET /topup/status — MustikaPay active confirm", () => {
+    it("credits a pending mustika order when check returns success", async () => {
+      const { checkMustikaStatus } = await import("../../src/services/mustikaService.js");
+      checkMustikaStatus.mockResolvedValue({ status: "success", amount: 50000 });
+
+      prisma.topUpOrder.findFirst.mockResolvedValue({
+        id: "order-m1",
+        publicId: "TOP-IDR-2606-000002",
+        provider: "mustika",
+        externalId: "QR-TEST-1",
+        status: "PENDING",
+        amountRupiah: 50000,
+        finalAmount: null,
+        metadata: { qrUrl: "q", paymentLink: "p", expiresAt: new Date(Date.now() + 600000).toISOString() },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      // creditTopUpOrder reads order again + credits
+      prisma.topUpOrder.findUnique.mockResolvedValue({
+        id: "order-m1", userId: mockUser.id, amountRupiah: 50000, status: "PENDING", metadata: {},
+      });
+      prisma.topUpOrder.update.mockResolvedValue({});
+      prisma.user.update.mockResolvedValue({ walletBalance: 150000 });
+      prisma.publicIdCounter.upsert.mockResolvedValue({ scope: "TXN-TOP-2606", nextNumber: 2 });
+      prisma.walletTransaction.create.mockResolvedValue({ id: "wt-1" });
+      prisma.activityLog.create.mockResolvedValue({ id: "al-1" });
+
+      const app = buildApp();
+      const res = await request(app).get("/topup/status/order-m1");
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("COMPLETED");
+      expect(res.body.paid).toBe(true);
+      expect(checkMustikaStatus).toHaveBeenCalledWith("QR-TEST-1");
+    });
+
+    it("auto-cancels a mustika order older than 20 minutes without crediting", async () => {
+      const { checkMustikaStatus } = await import("../../src/services/mustikaService.js");
+      checkMustikaStatus.mockReset();
+
+      prisma.topUpOrder.findFirst.mockResolvedValue({
+        id: "order-old",
+        publicId: "TOP-IDR-2606-000003",
+        provider: "mustika",
+        externalId: "QR-OLD",
+        status: "PENDING",
+        amountRupiah: 50000,
+        finalAmount: null,
+        metadata: {},
+        createdAt: new Date(Date.now() - 21 * 60 * 1000),
+        updatedAt: new Date(Date.now() - 21 * 60 * 1000),
+      });
+      prisma.topUpOrder.update.mockResolvedValue({});
+
+      const app = buildApp();
+      const res = await request(app).get("/topup/status/order-old");
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("CANCELED");
+      expect(prisma.topUpOrder.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "CANCELED" }) })
+      );
+    });
+
+    it("returns enriched QRIS fields for a pending order", async () => {
+      const { checkMustikaStatus } = await import("../../src/services/mustikaService.js");
+      checkMustikaStatus.mockResolvedValue({ status: "pending" });
+      prisma.topUpOrder.findFirst.mockResolvedValue({
+        id: "order-m2",
+        publicId: "TOP-IDR-2606-000004",
+        provider: "mustika",
+        externalId: "QR-TEST-2",
+        status: "PENDING",
+        amountRupiah: 50000,
+        finalAmount: null,
+        metadata: { qrUrl: "https://q", paymentLink: "https://p", expiresAt: new Date(Date.now() + 600000).toISOString() },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const app = buildApp();
+      const res = await request(app).get("/topup/status/order-m2");
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("PENDING");
+      expect(res.body.qrisImageUrl).toBe("https://q");
+      expect(res.body.paymentUrl).toBe("https://p");
+      expect(res.body.expiresAt).toBeTruthy();
+    });
+  });
 });
