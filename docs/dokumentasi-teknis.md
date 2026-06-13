@@ -9,7 +9,7 @@ RBX Royale adalah platform komersial berbasis web yang menyediakan dua layanan u
 1. **Script Store** - Marketplace untuk pembelian script Roblox berlisensi dengan sistem verifikasi real-time
 2. **Audio Processing** - Tools pemrosesan audio berbasis browser untuk kebutuhan game development
 
-Platform ini menggunakan arsitektur client-server dengan frontend Next.js dan backend Express.js, terintegrasi dengan payment gateway QRIS (Bayar.gg), object storage (Backblaze B2), dan email transaksional (Resend).
+Platform ini menggunakan arsitektur client-server dengan frontend Next.js dan backend Express.js, terintegrasi dengan payment gateway QRIS (Bayar.gg webhook & MustikaPay polling, dipilih via TOPUP_PROVIDER), object storage (Backblaze B2), dan email transaksional (Resend).
 
 ### 1.2 Tujuan Sistem
 
@@ -58,7 +58,8 @@ Platform ini menggunakan arsitektur client-server dengan frontend Next.js dan ba
 
 | Service | Fungsi |
 |---|---|
-| Bayar.gg | Payment gateway QRIS (top-up wallet) |
+| Bayar.gg | Payment gateway QRIS — webhook (HMAC) |
+| MustikaPay | Payment gateway QRIS — polling (tanpa signature) |
 | Backblaze B2 | Object storage untuk file script (S3-compatible) |
 | Resend | Email transaksional (notifikasi top-up dan pembelian) |
 | Google OAuth 2.0 | Autentikasi pengguna via Google |
@@ -653,9 +654,9 @@ Relasi: cartId → Cart.id (CASCADE), productId → Product.id (CASCADE)
 
 | Method | Path | Auth | Deskripsi |
 |---|---|---|---|
-| POST | /topup/create | Login | Buat pembayaran QRIS via Bayar.gg |
-| GET | /topup/status/:reference | Login | Cek status pembayaran (polling) |
-| POST | /webhooks/bayar | Publik (signature) | Webhook dari Bayar.gg saat pembayaran berhasil |
+| POST | /topup/create | Login | Buat pembayaran QRIS (Bayar.gg atau MustikaPay, sesuai TOPUP_PROVIDER) |
+| GET | /topup/status/:reference | Login | Cek status; untuk MustikaPay aktif konfirmasi ke gateway + auto-cancel 20 menit |
+| POST | /webhooks/bayar | Publik (signature) | Webhook Bayar.gg saat pembayaran berhasil (tidak dipakai MustikaPay) |
 
 ### 5.4 Store - Produk
 
@@ -739,24 +740,30 @@ Cookie session dikonfigurasi dengan: httpOnly (tidak bisa diakses JavaScript), s
 
 ### 6.2 Alur Top-Up (QRIS)
 
-Sistem top-up menggunakan payment gateway Bayar.gg dengan metode QRIS. Konfirmasi pembayaran dilakukan via webhook (server-to-server), bukan polling dari client.
+Top-up tersedia lewat dua payment gateway QRIS yang dipilih server via env `TOPUP_PROVIDER`:
+Bayar.gg (konfirmasi via webhook ber-signature) dan MustikaPay (konfirmasi via polling,
+karena webhook MustikaPay tidak ber-signature sehingga tidak dipercaya sebagai sumber kebenaran).
 
-1. User memasukkan nominal top-up di halaman /topup (minimum Rp 1.000, maksimum Rp 500.000)
-2. Frontend mengirim POST /topup/create ke backend dengan amount dan data customer
-3. Backend memvalidasi input menggunakan Zod schema
-4. Backend memanggil API Bayar.gg (create-payment.php) untuk membuat invoice QRIS
-5. Bayar.gg mengembalikan data pembayaran: invoice_id, qris_static_image_url, payment_url, expires_at
-6. Backend menyimpan TopUpOrder dengan status PENDING di database
-7. Backend mengembalikan response ke frontend: orderId, invoiceId, qrisImageUrl, paymentUrl, expiresAt
-8. Frontend menampilkan QR code dan memulai polling status setiap 3 detik
-9. User scan QR code menggunakan e-wallet atau mobile banking
-10. Setelah pembayaran berhasil, Bayar.gg mengirim webhook POST ke /webhooks/bayar
-11. Backend memverifikasi signature webhook menggunakan HMAC SHA256
-12. Backend menjalankan atomic transaction: mark order COMPLETED, credit wallet (walletBalance += amount), catat di WalletTransaction ledger, buat ActivityLog
-13. Backend mengirim email notifikasi ke user (fire-and-forget via Resend)
-14. Frontend polling mendeteksi status COMPLETED, menampilkan halaman sukses, dan refresh data user
+Alur umum (kedua provider):
+1. User memasukkan nominal di /topup (min Rp 1.000, maks Rp 500.000).
+2. Frontend POST /topup/create; backend memvalidasi via Zod.
+3. Backend memanggil gateway aktif untuk membuat QRIS, menyimpan TopUpOrder PENDING
+   (provider, externalId, metadata berisi qrUrl/paymentLink/expiresAt).
+4. Backend mengembalikan orderId, invoiceId, qrisImageUrl, paymentUrl, expiresAt.
+5. Frontend menampilkan QR, menyimpan orderId ke localStorage, dan polling /topup/status tiap 3 detik.
+   Saat app ditutup lalu dibuka lagi, order PENDING dipulihkan dari localStorage + status endpoint.
 
-Keamanan: webhook dilindungi HMAC signature, operasi wallet bersifat atomic (dalam satu database transaction), dan idempotent (webhook duplikat tidak menyebabkan double-credit).
+Konfirmasi pembayaran:
+- Bayar.gg: gateway mengirim webhook POST /webhooks/bayar; backend verifikasi HMAC SHA256,
+  lalu kredit wallet (atomic, idempotent) via creditTopUpOrder.
+- MustikaPay: tidak ada webhook tepercaya. Konfirmasi terjadi lewat (a) poller background tiap 3 menit
+  yang hanya jalan bila ada order PENDING, dan (b) tombol "Saya sudah bayar" / polling status endpoint —
+  keduanya memanggil GET /api/v1/check/qris. Jika "success" → kredit (verifikasi nominal cocok);
+  jika "expired" atau order lewat 20 menit → order ditandai CANCELED (auto-cancel; MustikaPay tidak
+  punya endpoint cancel, QR mati sendiri via expiry=20).
+
+Keamanan: kredit wallet selalu lewat creditTopUpOrder — atomic (satu transaction), idempotent
+(tidak double-credit), dan menolak bila nominal terkonfirmasi tidak cocok dengan order.
 
 ### 6.3 Alur Pembelian Script
 
@@ -922,6 +929,9 @@ Audio processing dilakukan sepenuhnya di browser (client-side) menggunakan Web A
 | BAYARGG_API_KEY | Bayar.gg API key |
 | BAYARGG_WEBHOOK_SECRET | Bayar.gg webhook HMAC secret |
 | BAYARGG_WEBHOOK_URL | URL webhook yang didaftarkan ke Bayar.gg |
+| TOPUP_PROVIDER | Pemilih gateway top-up: "bayar.gg" atau "mustika" |
+| MUSTIKAPAY_API_KEY | MustikaPay API key (header X-Api-Key) |
+| MUSTIKAPAY_BASE_URL | Base URL MustikaPay (default https://mustikapayment.com) |
 | S3_ENDPOINT | Backblaze B2 endpoint |
 | S3_ACCESS_KEY_ID | B2 access key |
 | S3_SECRET_ACCESS_KEY | B2 secret key |

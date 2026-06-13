@@ -142,9 +142,9 @@ Session-based via `connect.sid` cookie. Established through OAuth login flow (Go
 
 | Method | Path | Access | Validation | Description |
 |--------|------|--------|------------|-------------|
-| POST | `/topup/create` | Protected | Zod: `createTopUpSchema` | Create QRIS payment |
-| GET | `/topup/status/:reference` | Protected | — | Poll payment status |
-| POST | `/webhooks/bayar` | Public (signature verified) | — | Bayar.gg webhook |
+| POST | `/topup/create` | Protected | Zod: `createTopUpSchema` | Create QRIS payment (provider via TOPUP_PROVIDER) |
+| GET | `/topup/status/:reference` | Protected | — | Poll status; MustikaPay: active confirm + 20-min auto-cancel |
+| POST | `/webhooks/bayar` | Public (signature verified) | — | Bayar.gg webhook (MustikaPay uses polling, no webhook) |
 
 ### POST /topup/create — Body
 
@@ -165,11 +165,11 @@ Session-based via `connect.sid` cookie. Established through OAuth login flow (Go
   "ok": true,
   "orderId": "cuid",
   "publicId": "TOP-IDR-2606-000001",
-  "invoiceId": "INV-xxx",
+  "invoiceId": "QR1776670534209",
   "amount": 50000,
-  "paymentUrl": "https://bayar.gg/pay/...",
-  "qrisImageUrl": "https://...",
-  "expiresAt": "2026-05-15T00:15:00.000Z"
+  "paymentUrl": "https://mustikapayment.com/pay/QR1776670534209",
+  "qrisImageUrl": "https://mustikapayment.com/qris/QR1776670534209.png",
+  "expiresAt": "2026-05-15T00:20:00.000Z"
 }
 ```
 
@@ -183,10 +183,15 @@ Session-based via `connect.sid` cookie. Established through OAuth login flow (Go
   "status": "PENDING",
   "amount": 50000,
   "finalAmount": null,
+  "qrisImageUrl": "https://mustikapayment.com/qris/QR1776670534209.png",
+  "paymentUrl": "https://mustikapayment.com/pay/QR1776670534209",
+  "expiresAt": "2026-05-15T00:20:00.000Z",
   "createdAt": "2026-05-15T00:00:00.000Z",
   "updatedAt": "2026-05-15T00:00:00.000Z"
 }
 ```
+
+While the order is `PENDING`, the response includes `qrisImageUrl`, `paymentUrl`, and `expiresAt` so the frontend can re-render the QR after a reload. For MustikaPay orders this endpoint actively confirms against the gateway (`GET /api/v1/check/qris`): a confirmed payment flips `status` to `COMPLETED`, while an expired QR or an order past 20 minutes is marked `CANCELED` (auto-cancel).
 
 ### POST /webhooks/bayar
 
@@ -446,7 +451,7 @@ All mutations recorded in `WalletTransaction` ledger with `balanceAfter` snapsho
 
 | Transaction Type | Trigger |
 |-----------------|---------|
-| `TOP_UP` | Bayar.gg webhook confirms payment |
+| `TOP_UP` | Bayar.gg webhook OR MustikaPay status check/poller confirms payment |
 | `PURCHASE` | Script checkout |
 | `AUDIO_CHARGE` | Paid audio upload (after free quota) |
 | `REFUND` | Admin refund |

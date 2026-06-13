@@ -8,7 +8,7 @@ Backend API untuk platform RBX Royale. Menyediakan layanan audio processing, scr
 - **Framework:** Express.js
 - **Database:** MySQL via Prisma ORM
 - **Auth:** Session-based OAuth (Google, Discord)
-- **Payment:** Bayar.gg (QRIS)
+- **Payment:** Bayar.gg (QRIS, webhook) & MustikaPay (QRIS, polling) — selected by `TOPUP_PROVIDER`
 - **Testing:** Vitest + Supertest
 
 ## Prerequisites
@@ -58,10 +58,18 @@ npx prisma db push --force-reset
 
 ### 5. Setup Payment Gateway
 
+Backend mendukung dua payment gateway QRIS yang dipilih via env `TOPUP_PROVIDER` (`"bayar.gg"` atau `"mustika"`, default `"bayar.gg"`).
+
+**Bayar.gg (webhook):**
 1. Daftar di [Bayar.gg](https://www.bayar.gg/)
 2. Dapatkan API Key dan Webhook Secret
 3. Set webhook URL (untuk production) atau gunakan webhook test URL untuk development
-4. Copy credentials ke `.env`
+4. Copy credentials ke `.env` (`BAYARGG_API_KEY`, `BAYARGG_WEBHOOK_SECRET`, `BAYARGG_WEBHOOK_URL`)
+
+**MustikaPay (polling):**
+1. Dapatkan API Key dari MustikaPay
+2. Set `MUSTIKAPAY_API_KEY` dan opsional `MUSTIKAPAY_BASE_URL` (default `https://mustikapayment.com`)
+3. Tidak perlu webhook secret — konfirmasi pembayaran dilakukan via polling (poller background + status endpoint), bukan webhook
 
 ## Menjalankan Server
 
@@ -123,6 +131,8 @@ backend/
 │   │   ├── authService.js     # OAuth, session, quota
 │   │   ├── databaseService.js # Wallet operations (creditWallet, debitWallet)
 │   │   ├── bayarService.js    # Bayar.gg payment gateway
+│   │   ├── mustikaService.js  # MustikaPay payment gateway (QRIS, polling)
+│   │   ├── topupPoller.js     # Background reconciliation for MustikaPay orders
 │   │   ├── walletService.js   # Audio charge utilities
 │   │   ├── pricingService.js  # Duration-based pricing
 │   │   └── uploadService.js   # File upload handling
