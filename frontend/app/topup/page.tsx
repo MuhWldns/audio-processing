@@ -11,6 +11,8 @@ type Step = 'input' | 'processing' | 'qris' | 'polling' | 'success' | 'failed' |
 
 const quickAmounts = [10000, 25000, 50000, 100000, 250000, 500000];
 
+const PENDING_KEY = 'pendingTopUpOrder';
+
 export default function TopUpPage() {
   const { user, refreshUser } = useAuth();
 
@@ -86,6 +88,7 @@ export default function TopUpPage() {
         if (status.paid || status.status === 'COMPLETED') {
           if (pollingRef.current) clearInterval(pollingRef.current);
           setStep('success');
+          if (typeof window !== 'undefined') localStorage.removeItem(PENDING_KEY);
           await refreshUser();
           return;
         }
@@ -93,6 +96,7 @@ export default function TopUpPage() {
         if (status.status === 'FAILED' || status.status === 'CANCELED') {
           if (pollingRef.current) clearInterval(pollingRef.current);
           setStep('failed');
+          if (typeof window !== 'undefined') localStorage.removeItem(PENDING_KEY);
           setError('Pembayaran gagal atau dibatalkan.');
           return;
         }
@@ -137,6 +141,9 @@ export default function TopUpPage() {
       });
 
       setOrderId(result.orderId);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(PENDING_KEY, result.orderId);
+      }
       setQrisImageUrl(result.qrisImageUrl || null);
       setPaymentUrl(result.paymentUrl || null);
       setExpiresAt(result.expiresAt || null);
@@ -160,6 +167,9 @@ export default function TopUpPage() {
     if (pollingRef.current) clearInterval(pollingRef.current);
     if (countdownRef.current) clearInterval(countdownRef.current);
     setStep('input');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(PENDING_KEY);
+    }
     setError(null);
     setOrderId(null);
     setQrisImageUrl(null);
@@ -169,15 +179,42 @@ export default function TopUpPage() {
     setCountdown('');
   };
 
-  // Check URL params for returning from payment
+  // Restore a pending order on mount: from ?order= param or localStorage.
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (step !== 'input') return;
+
     const params = new URLSearchParams(window.location.search);
-    const orderParam = params.get('order');
-    if (orderParam && step === 'input') {
-      setOrderId(orderParam);
-      startPolling(orderParam);
-    }
+    const restoreId = params.get('order') || localStorage.getItem(PENDING_KEY);
+    if (!restoreId) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await getTopUpStatus(restoreId);
+        if (cancelled) return;
+
+        if (status.status === 'PENDING') {
+          setOrderId(restoreId);
+          setOrderAmount(status.amount);
+          setQrisImageUrl(status.qrisImageUrl || null);
+          setPaymentUrl(status.paymentUrl || null);
+          setExpiresAt(status.expiresAt || null);
+          localStorage.setItem(PENDING_KEY, restoreId);
+          setStep('qris');
+          startPolling(restoreId);
+        } else {
+          // Terminal state — nothing pending to show.
+          localStorage.removeItem(PENDING_KEY);
+        }
+      } catch {
+        // Ignore; user can start a new top-up.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [step, startPolling]);
 
   if (!user) {
@@ -362,6 +399,33 @@ export default function TopUpPage() {
               <p className="text-sm text-violet-200">Mengecek status pembayaran otomatis...</p>
             </div>
 
+            <button
+              type="button"
+              onClick={async () => {
+                if (!orderId) return;
+                try {
+                  const status = await getTopUpStatus(orderId);
+                  if (status.paid || status.status === 'COMPLETED') {
+                    if (pollingRef.current) clearInterval(pollingRef.current);
+                    if (typeof window !== 'undefined') localStorage.removeItem(PENDING_KEY);
+                    setStep('success');
+                    await refreshUser();
+                  } else if (status.status === 'CANCELED' || status.status === 'FAILED') {
+                    if (pollingRef.current) clearInterval(pollingRef.current);
+                    if (typeof window !== 'undefined') localStorage.removeItem(PENDING_KEY);
+                    setStep('failed');
+                    setError('Pembayaran dibatalkan atau kedaluwarsa.');
+                  } else {
+                    setError('Pembayaran belum terdeteksi. Coba lagi sebentar.');
+                  }
+                } catch {
+                  setError('Gagal mengecek status. Coba lagi.');
+                }
+              }}
+              className="w-full rounded-full bg-emerald-500/90 px-6 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500"
+            >
+              Saya sudah bayar
+            </button>
             <button
               type="button"
               onClick={handleReset}
