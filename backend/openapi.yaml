@@ -22,7 +22,7 @@ tags:
   - name: History
     description: Audio upload history
   - name: TopUp
-    description: Wallet top-up via Bayar.gg QRIS
+    description: Wallet top-up via QRIS (Bayar.gg webhook or MustikaPay polling, selected by TOPUP_PROVIDER)
   - name: Products
     description: Script store product catalog (public)
   - name: Cart
@@ -35,6 +35,8 @@ tags:
     description: License verification (called from Roblox games)
   - name: Admin
     description: Admin panel endpoints (requires ADMIN role)
+  - name: User
+    description: Authenticated user profile, transactions, Roblox binding
 
 paths:
   /health:
@@ -404,6 +406,99 @@ paths:
                   value:
                     error: "File no longer exists"
 
+  /user/transactions:
+    get:
+      tags: [User]
+      summary: Get wallet transaction history
+      operationId: getUserTransactions
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [ALL, TOP_UP, PURCHASE, AUDIO_CHARGE, REFUND, ADJUSTMENT]
+          description: Filter by transaction type (ALL = no filter)
+      responses:
+        "200":
+          description: Paginated wallet transactions
+          content:
+            application/json:
+              example:
+                transactions:
+                  - id: "txn-1"
+                    publicId: "TXN-TOP-2606-000001"
+                    type: "TOP_UP"
+                    amount: 10000
+                    balanceAfter: 60000
+                    description: "Top up Rp 10.000 via mustika"
+                    referenceType: "TOP_UP_ORDER"
+                    referenceId: "order-1"
+                    createdAt: "2026-06-13T11:05:00.000Z"
+                pagination: { page: 1, limit: 20, total: 1, totalPages: 1 }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /user/roblox-id:
+    put:
+      tags: [User]
+      summary: Set or update Roblox User ID
+      operationId: setRobloxUserId
+      security:
+        - cookieAuth: []
+      description: Validates the Roblox user exists via the Roblox API before saving.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [robloxUserId]
+              properties:
+                robloxUserId:
+                  type: string
+                  description: Numeric Roblox user ID
+            example:
+              robloxUserId: "123456789"
+      responses:
+        "200":
+          description: Roblox ID saved
+          content:
+            application/json:
+              example:
+                ok: true
+                robloxUserId: "123456789"
+                robloxUsername: "builderman"
+                robloxDisplayName: "builderman"
+        "400":
+          description: Missing or non-numeric ID
+          content:
+            application/json:
+              examples:
+                missing: { value: { error: "robloxUserId is required" } }
+                notNumeric: { value: { error: "Roblox User ID must be numeric" } }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Roblox user not found
+          content:
+            application/json:
+              example:
+                error: "Roblox User ID not found. Please check your ID."
+        "502":
+          description: Roblox API error
+          content:
+            application/json:
+              example:
+                error: "Failed to validate Roblox User ID. Please try again later."
+
   /topup/create:
     post:
       tags: [TopUp]
@@ -412,8 +507,9 @@ paths:
       security:
         - cookieAuth: []
       description: |
-        Creates a top-up order via Bayar.gg QRIS payment.
-        Amount in Rupiah is credited directly to wallet balance.
+        Creates a QRIS top-up order. Provider is selected by the server's TOPUP_PROVIDER env
+        ("bayar.gg" uses a signed webhook; "mustika" uses polling — no webhook).
+        Amount in Rupiah is credited to the wallet only after the payment is confirmed.
       requestBody:
         required: true
         content:
@@ -446,11 +542,12 @@ paths:
               example:
                 ok: true
                 orderId: "clx3order1"
-                invoiceId: "INV-20260514-ABC123"
+                publicId: "TOP-IDR-2606-000001"
+                invoiceId: "QR1776670534209"
                 amount: 10000
-                paymentUrl: "https://www.bayar.gg/pay?invoice=INV-20260514-ABC123"
-                qrisImageUrl: "https://www.bayar.gg/qris-info/api/qr.php?text=...&size=300"
-                expiresAt: "2026-05-14T11:00:00.000Z"
+                paymentUrl: "https://mustikapayment.com/pay/QR1776670534209"
+                qrisImageUrl: "https://mustikapayment.com/api/qr?data=000201...&ref_no=QR1776670534209"
+                expiresAt: "2026-06-13T11:20:00.000Z"
         "400":
           description: Invalid amount
           content:
@@ -496,7 +593,7 @@ paths:
           description: "Order ID or external invoice ID"
       responses:
         "200":
-          description: Order status
+          description: Order status (QRIS render fields included while pending)
           content:
             application/json:
               examples:
@@ -504,22 +601,41 @@ paths:
                   summary: Payment pending
                   value:
                     ok: true
+                    publicId: "TOP-IDR-2606-000001"
                     paid: false
                     status: "PENDING"
                     amount: 10000
                     finalAmount: null
-                    createdAt: "2026-05-14T10:00:00.000Z"
-                    updatedAt: "2026-05-14T10:00:00.000Z"
+                    qrisImageUrl: "https://mustikapayment.com/api/qr?data=000201...&ref_no=QR123"
+                    paymentUrl: "https://mustikapayment.com/pay/QR123"
+                    expiresAt: "2026-06-13T11:20:00.000Z"
+                    createdAt: "2026-06-13T11:00:00.000Z"
+                    updatedAt: "2026-06-13T11:00:00.000Z"
                 completed:
                   summary: Payment completed
                   value:
                     ok: true
+                    publicId: "TOP-IDR-2606-000001"
                     paid: true
                     status: "COMPLETED"
                     amount: 10000
-                    finalAmount: 10200
-                    createdAt: "2026-05-14T10:00:00.000Z"
-                    updatedAt: "2026-05-14T10:05:00.000Z"
+                    finalAmount: 10000
+                    qrisImageUrl: null
+                    paymentUrl: null
+                    expiresAt: null
+                    createdAt: "2026-06-13T11:00:00.000Z"
+                    updatedAt: "2026-06-13T11:05:00.000Z"
+                canceled:
+                  summary: Auto-canceled after 20 minutes (MustikaPay)
+                  value:
+                    ok: true
+                    publicId: "TOP-IDR-2606-000001"
+                    paid: false
+                    status: "CANCELED"
+                    amount: 10000
+                    finalAmount: null
+                    createdAt: "2026-06-13T11:00:00.000Z"
+                    updatedAt: "2026-06-13T11:21:00.000Z"
         "400":
           description: Missing reference
           content:
@@ -1270,6 +1386,144 @@ paths:
                   value:
                     error: "File not found on server"
 
+  /api/license/handshake:
+    post:
+      tags: [Verification]
+      summary: License handshake (Roblox runtime enforcement)
+      operationId: licenseHandshake
+      security: []
+      description: |
+        Called from the protected Roblox asset module. Validates the license + game,
+        returns a time-bucketed signKey and a session token. Rate limited (10/min).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [licenseKey, gameId]
+              properties:
+                licenseKey: { type: string }
+                gameId: { type: string }
+                gameName: { type: string }
+                creatorId: { type: string }
+                creatorType: { type: string }
+            example:
+              licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+              gameId: "123456789"
+              gameName: "My Roblox Game"
+      responses:
+        "200":
+          description: Handshake result
+          content:
+            application/json:
+              examples:
+                valid:
+                  value:
+                    valid: true
+                    sessionToken: "a1b2c3..."
+                    signKey: "9f8e7d..."
+                    expiresIn: 300
+                    product: { name: "UI System Pro", version: "1.2.0" }
+                    license: { type: "PERSONAL", maxGames: 3 }
+                invalid:
+                  value:
+                    valid: false
+                    reason: "not_whitelisted"
+        "400":
+          description: Missing params
+          content:
+            application/json:
+              example:
+                valid: false
+                reason: "missing_params"
+
+  /api/license/heartbeat:
+    post:
+      tags: [Verification]
+      summary: License heartbeat (periodic re-verification + signKey rotation)
+      operationId: licenseHeartbeat
+      security: []
+      description: Rate limited (15/min). Requires a session token from the handshake.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [licenseKey, gameId, sessionToken]
+              properties:
+                licenseKey: { type: string }
+                gameId: { type: string }
+                sessionToken: { type: string }
+                creatorId: { type: string }
+            example:
+              licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+              gameId: "123456789"
+              sessionToken: "a1b2c3..."
+      responses:
+        "200":
+          description: Heartbeat result
+          content:
+            application/json:
+              examples:
+                valid:
+                  value:
+                    valid: true
+                    signKey: "rotated..."
+                    expiresIn: 300
+                invalid:
+                  value:
+                    valid: false
+                    reason: "invalid_session"
+        "400":
+          description: Missing params
+          content:
+            application/json:
+              example:
+                valid: false
+                reason: "missing_params"
+
+  /api/license/enforce:
+    post:
+      tags: [Verification]
+      summary: Fetch encrypted enforcement payload
+      operationId: licenseEnforce
+      security: []
+      description: |
+        Returns an XOR-encrypted, base64-encoded Lua payload for the given phase (1-5).
+        Rate limited (5/min). The client derives the decryption key from signKey+licenseKey+gameId.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [licenseKey, gameId]
+              properties:
+                licenseKey: { type: string }
+                gameId: { type: string }
+                phase: { type: integer, minimum: 1, maximum: 5, default: 1 }
+            example:
+              licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+              gameId: "123456789"
+              phase: 1
+      responses:
+        "200":
+          description: Encrypted enforcement payload
+          content:
+            application/json:
+              example:
+                payload: "base64-encrypted-lua..."
+                nextPhase: 2
+                nextDelay: 300
+        "400":
+          description: Missing params
+          content:
+            application/json:
+              example:
+                error: "missing_params"
+
   /api/verify-license:
     post:
       tags: [Verification]
@@ -2009,6 +2263,280 @@ paths:
               example:
                 error: "License not found"
 
+  /admin/licenses/active:
+    get:
+      tags: [Admin]
+      summary: List currently-active licenses (verified in last 5 min)
+      operationId: adminActiveLicenses
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Active licenses snapshot
+          content:
+            application/json:
+              example:
+                count: 1
+                licenses:
+                  - id: "clx6lic1"
+                    licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+                    licenseType: "PERSONAL"
+                    lastVerifiedAt: "2026-06-13T11:00:00.000Z"
+                    user: { id: "clx1abc123", email: "dev@rbxroyale.com", displayName: "RBX Dev" }
+                    product: { id: "clx4prod1", name: "UI System Pro", slug: "ui-system-pro" }
+                    activeGames:
+                      - { gameId: "123456789", gameName: "My Roblox Game" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/licenses/{id}/logs:
+    get:
+      tags: [Admin]
+      summary: Verification logs for a license
+      operationId: adminLicenseLogs
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 100 }
+      responses:
+        "200":
+          description: Paginated verification logs
+          content:
+            application/json:
+              example:
+                licenseId: "clx6lic1"
+                licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9"
+                logs:
+                  - id: "ver-1"
+                    gameId: "123456789"
+                    success: true
+                    reason: "handshake_ok"
+                    verifiedAt: "2026-06-13T11:00:00.000Z"
+                pagination: { page: 1, limit: 50, total: 1, totalPages: 1 }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: License not found
+          content:
+            application/json:
+              example:
+                error: "License not found"
+
+  /admin/licenses/{id}/kill:
+    post:
+      tags: [Admin]
+      summary: Kill switch — suspend a license immediately
+      operationId: adminKillSwitch
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+            example:
+              reason: "Chargeback fraud"
+      responses:
+        "200":
+          description: License suspended
+          content:
+            application/json:
+              example:
+                ok: true
+                license: { id: "clx6lic1", licenseKey: "RBXR-A2B3-C4D5-E6F7-G8H9", status: "SUSPENDED" }
+                message: "License suspended. Next heartbeat will trigger enforcement."
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: License not found
+          content:
+            application/json:
+              example:
+                error: "License not found"
+
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List users (paginated, searchable)
+      operationId: adminListUsers
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 100 }
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Matches email, displayName, username, fullName
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [ALL, USER, ADMIN]
+      responses:
+        "200":
+          description: Paginated user list
+          content:
+            application/json:
+              example:
+                users:
+                  - id: "clx1abc123"
+                    publicId: "ACC-IDN-2606-000001"
+                    email: "dev@rbxroyale.com"
+                    displayName: "RBX Dev"
+                    role: "USER"
+                    walletBalance: 50000
+                    totalTopUp: 100000
+                    totalSpent: 50000
+                    licensesCount: 2
+                    purchasesCount: 3
+                    createdAt: "2026-05-01T10:00:00.000Z"
+                pagination: { page: 1, limit: 50, total: 1, totalPages: 1 }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/users/{id}/role:
+    put:
+      tags: [Admin]
+      summary: Change a user's role
+      operationId: adminChangeUserRole
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [USER, ADMIN]
+            example:
+              role: "ADMIN"
+      responses:
+        "200":
+          description: Role updated
+          content:
+            application/json:
+              example:
+                ok: true
+                user: { id: "clx1abc123", email: "dev@rbxroyale.com", displayName: "RBX Dev", role: "ADMIN" }
+        "400":
+          description: Invalid role
+          content:
+            application/json:
+              example:
+                error: "Valid role required: USER or ADMIN"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Forbidden (e.g. cannot demote yourself)
+          content:
+            application/json:
+              example:
+                error: "Cannot demote yourself"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              example:
+                error: "User not found"
+
+  /admin/users/{id}/adjust-balance:
+    post:
+      tags: [Admin]
+      summary: Adjust a user's wallet balance
+      operationId: adminAdjustUserBalance
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, reason]
+              properties:
+                amount:
+                  type: integer
+                  description: Non-zero; positive credits, negative debits
+                reason:
+                  type: string
+            example:
+              amount: 25000
+              reason: "Goodwill credit"
+      responses:
+        "200":
+          description: Balance adjusted
+          content:
+            application/json:
+              example:
+                ok: true
+                user: { id: "clx1abc123", newBalance: 75000 }
+        "400":
+          description: Invalid adjustment
+          content:
+            application/json:
+              examples:
+                zeroAmount: { value: { error: "Amount must be a non-zero number" } }
+                missingReason: { value: { error: "Reason is required" } }
+                wouldGoNegative:
+                  value:
+                    error: "Adjustment would result in negative balance"
+                    currentBalance: 10000
+                    adjustment: -50000
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              example:
+                error: "User not found"
+
   /admin/analytics:
     get:
       tags: [Admin]
@@ -2356,18 +2884,21 @@ components:
       properties:
         orderId:
           type: string
+        publicId:
+          type: string
+          nullable: true
         invoiceId:
           type: string
+          description: Provider reference (Bayar.gg invoice_id or MustikaPay ref_no)
         amount:
           type: integer
           description: Amount in Rupiah
         finalAmount:
           type: integer
           nullable: true
-          description: Amount actually paid (with unique code)
         paymentUrl:
           type: string
-          description: Bayar.gg payment URL
+          description: Provider payment page URL
         qrisImageUrl:
           type: string
           description: QR code image URL for QRIS payment
