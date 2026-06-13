@@ -78,4 +78,36 @@ describe("mustikaService", () => {
       await expect(createMustikaQris({ amount: 10000 })).rejects.toThrow(/status=success/);
     });
   });
+
+  describe("checkMustikaStatus", () => {
+    it("GETs check/qris with X-Api-Key and maps status + amount", async () => {
+      const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ ref_no: "QR123", status: "success", type: "QRIS", amount: 10000 }),
+      });
+
+      const result = await checkMustikaStatus("QR123");
+
+      expect(result.status).toBe("success");
+      expect(result.amount).toBe(10000);
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("https://mustikapayment.com/api/v1/check/qris?ref_no=QR123");
+      expect(opts.method).toBe("GET");
+      expect(opts.headers["X-Api-Key"]).toBe("MP-test-key");
+    });
+
+    it("url-encodes the ref_no", async () => {
+      const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "pending" }),
+      });
+      await checkMustikaStatus("QR 1/2");
+      expect(fetchMock.mock.calls[0][0]).toBe("https://mustikapayment.com/api/v1/check/qris?ref_no=QR%201%2F2");
+    });
+
+    it("throws on non-ok HTTP response", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 404, text: async () => "nope" });
+      await expect(checkMustikaStatus("QR123")).rejects.toThrow(/MustikaPay check-qris failed: 404/);
+    });
+  });
 });

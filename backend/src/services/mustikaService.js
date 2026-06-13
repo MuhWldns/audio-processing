@@ -55,7 +55,23 @@ export const createMustikaQris = async ({
   };
 };
 
-// Placeholder — implemented in a later task. Exported so the test file's import resolves.
-export const checkMustikaStatus = async () => {
-  throw new Error("checkMustikaStatus not implemented yet");
+export const checkMustikaStatus = async (refNo) => {
+  const { apiKey, baseUrl } = getMustikaConfig();
+  if (!apiKey) {
+    throw new Error("MustikaPay API key not configured");
+  }
+
+  const url = `${baseUrl}/api/v1/check/qris?ref_no=${encodeURIComponent(refNo)}`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { "X-Api-Key": apiKey },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`MustikaPay check-qris failed: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  return { status: data.status, amount: data.amount, raw: data };
 };
