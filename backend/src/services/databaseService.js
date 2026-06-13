@@ -5,6 +5,7 @@
  */
 
 import { prisma } from '../prisma.js';
+import { generatePublicId } from "./publicIdService.js";
 
 /**
  * Credit wallet (add balance)
@@ -193,4 +194,74 @@ export async function adminAdjustBalance(userId, amount, reason) {
       description: `Admin adjustment: ${reason}`,
     });
   }
+}
+
+/**
+ * Credit a top-up order's wallet atomically and idempotently.
+ * Shared by Bayar.gg webhook, MustikaPay poller, and status endpoint.
+ * @param {string} orderId
+ * @param {Object} opts
+ * @param {number} opts.confirmedAmount - amount confirmed by the provider (must match order.amountRupiah)
+ * @param {string} [opts.providerName="bayar.gg"]
+ * @param {Object} [opts.paymentMeta] - extra metadata to store on the order/ledger
+ * @returns {Promise<{credited:boolean, alreadyProcessed?:boolean, notFound?:boolean, userId?:string, amount?:number}>}
+ */
+export async function creditTopUpOrder(orderId, { confirmedAmount, providerName = "bayar.gg", paymentMeta = {} } = {}) {
+  return await prisma.$transaction(async (tx) => {
+    const order = await tx.topUpOrder.findUnique({ where: { id: orderId } });
+    if (!order) return { credited: false, notFound: true };
+    if (order.status === "COMPLETED") return { credited: false, alreadyProcessed: true, userId: order.userId };
+
+    if (typeof confirmedAmount === "number" && confirmedAmount !== order.amountRupiah) {
+      throw new Error(`Top-up amount mismatch: confirmed ${confirmedAmount} != order ${order.amountRupiah}`);
+    }
+
+    const amount = order.amountRupiah;
+
+    // Lock: mark COMPLETED first to prevent race / double-credit
+    await tx.topUpOrder.update({ where: { id: order.id }, data: { status: "COMPLETED" } });
+
+    const user = await tx.user.update({
+      where: { id: order.userId },
+      data: { walletBalance: { increment: amount }, totalTopUp: { increment: amount } },
+      select: { walletBalance: true },
+    });
+
+    const transactionPublicId = await generatePublicId(tx, "TXN", "TOP");
+    await tx.walletTransaction.create({
+      data: {
+        publicId: transactionPublicId,
+        userId: order.userId,
+        type: "TOP_UP",
+        amount,
+        balanceAfter: user.walletBalance,
+        referenceType: "TOP_UP_ORDER",
+        referenceId: order.id,
+        description: `Top up Rp ${amount.toLocaleString("id-ID")} via ${providerName}`,
+        metadata: paymentMeta,
+      },
+    });
+
+    await tx.activityLog.create({
+      data: {
+        userId: order.userId,
+        type: "TOP_UP",
+        status: "SUCCESS",
+        title: "Top up successful",
+        description: `Top up Rp ${amount.toLocaleString("id-ID")}`,
+        amountRupiah: amount,
+        metadata: paymentMeta,
+      },
+    });
+
+    await tx.topUpOrder.update({
+      where: { id: order.id },
+      data: {
+        finalAmount: typeof confirmedAmount === "number" ? confirmedAmount : amount,
+        metadata: { ...(order.metadata || {}), ...paymentMeta },
+      },
+    });
+
+    return { credited: true, userId: order.userId, amount };
+  });
 }
