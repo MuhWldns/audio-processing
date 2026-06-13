@@ -153,99 +153,35 @@ export const handleBayarWebhook = async (req, res) => {
   }
 
   try {
-    // Atomic idempotency: find + check status + update in single transaction
-    const result = await prisma.$transaction(async (tx) => {
-      const order = await tx.topUpOrder.findUnique({ where: { externalId: invoiceId } });
-      if (!order) {
-        return { error: "Order not found", status: 404 };
-      }
-
-      if (order.status === "COMPLETED") {
-        return { ok: true, alreadyProcessed: true };
-      }
-
-      // Lock: immediately mark as COMPLETED to prevent race condition
-      await tx.topUpOrder.update({
-        where: { id: order.id },
-        data: { status: "COMPLETED" },
-      });
-
-      const amount = order.amountRupiah;
-      const paymentMeta = {
-        invoiceId,
-        status,
-        amount: req.body?.amount,
-        finalAmount: req.body?.final_amount,
-        uniqueCode: req.body?.unique_code,
-        paidAt: req.body?.paid_at,
-        paidReffNum: req.body?.paid_reff_num,
-        customerName: req.body?.customer_name,
-        customerEmail: req.body?.customer_email,
-        customerPhone: req.body?.customer_phone,
-      };
-
-      // Credit wallet
-      const user = await tx.user.update({
-        where: { id: order.userId },
-        data: {
-          walletBalance: { increment: amount },
-          totalTopUp: { increment: amount },
-        },
-        select: { walletBalance: true },
-      });
-
-      // Record in unified ledger
-      const transactionPublicId = await generatePublicId(tx, "TXN", "TOP");
-      await tx.walletTransaction.create({
-        data: {
-          publicId: transactionPublicId,
-          userId: order.userId,
-          type: "TOP_UP",
-          amount,
-          balanceAfter: user.walletBalance,
-          referenceType: "TOP_UP_ORDER",
-          referenceId: order.id,
-          description: `Top up Rp ${amount.toLocaleString("id-ID")} via ${PROVIDER_NAME}`,
-          metadata: paymentMeta,
-        },
-      });
-
-      // Create activity log
-      await tx.activityLog.create({
-        data: {
-          userId: order.userId,
-          type: "TOP_UP",
-          status: "SUCCESS",
-          title: "Top up successful",
-          description: `Top up Rp ${amount.toLocaleString("id-ID")}`,
-          amountRupiah: amount,
-          metadata: paymentMeta,
-        },
-      });
-
-      // Update order metadata
-      await tx.topUpOrder.update({
-        where: { id: order.id },
-        data: {
-          finalAmount: req.body?.final_amount ? Number(req.body.final_amount) : null,
-          metadata: {
-            ...(order.metadata || {}),
-            paidAt: req.body?.paid_at,
-            paidReffNum: req.body?.paid_reff_num,
-            webhookPayload: paymentMeta,
-          },
-        },
-      });
-
-      return { ok: true, userId: order.userId, amount };
-    });
-
-    if (result.error) {
-      return res.status(result.status).json({ error: result.error });
+    const order = await prisma.topUpOrder.findUnique({ where: { externalId: invoiceId } });
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
     }
 
-    // Send email notification (fire-and-forget)
-    if (result.ok && !result.alreadyProcessed) {
+    const paymentMeta = {
+      invoiceId,
+      status,
+      amount: req.body?.amount,
+      finalAmount: req.body?.final_amount,
+      uniqueCode: req.body?.unique_code,
+      paidAt: req.body?.paid_at,
+      paidReffNum: req.body?.paid_reff_num,
+      customerName: req.body?.customer_name,
+      customerEmail: req.body?.customer_email,
+      customerPhone: req.body?.customer_phone,
+    };
+
+    const result = await creditTopUpOrder(order.id, {
+      confirmedAmount: order.amountRupiah,
+      providerName: PROVIDER_NAME,
+      paymentMeta,
+    });
+
+    if (result.notFound) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    if (result.credited) {
       const user = await prisma.user.findUnique({
         where: { id: result.userId },
         select: { email: true, displayName: true, walletBalance: true },
