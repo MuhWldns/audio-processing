@@ -1,0 +1,345 @@
+@startuml AudioProcessingERD
+title AudioProcessing Database ERD
+
+hide circle
+skinparam linetype ortho
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam entity {
+  BackgroundColor #FFFFFF
+  BorderColor #2F3A4A
+  FontColor #111827
+}
+
+legend right
+  <b>Notation</b>
+  * = Primary key
+  <<UQ>> = Unique
+  <<FK>> = Foreign key
+  publicId = readable business ID for UI/admin/support
+  id = internal CUID primary key for relations
+endlegend
+
+entity "PublicIdCounter" as PublicIdCounter {
+  * id : String <<PK>>
+  --
+  scope : String <<UQ>>
+  nextNumber : Int
+  updatedAt : DateTime
+}
+
+entity "User" as User {
+  * id : String <<PK>>
+  --
+  publicId : String <<UQ>>
+  username : String <<UQ>>
+  email : String <<UQ>>
+  fullName : String
+  displayName : String
+  avatarUrl : String
+  role : UserRole
+  isEmailVerified : Boolean
+  robloxUserId : String
+  lastLoginAt : DateTime
+  lastLoginProvider : AuthProvider
+  freeAudioDateKey : String
+  freeAudioUsedToday : Int
+  freeAudioDailyLimit : Int
+  paidAudioCost : Int
+  walletBalance : Int
+  totalTopUp : Int
+  totalSpent : Int
+  createdAt : DateTime
+  updatedAt : DateTime
+}
+
+entity "OAuthAccount" as OAuthAccount {
+  * id : String <<PK>>
+  --
+  userId : String <<FK>>
+  provider : AuthProvider
+  providerAccountId : String
+  accessToken : Text
+  refreshToken : Text
+  expiresAt : DateTime
+  scope : String
+  tokenType : String
+  idToken : Text
+  createdAt : DateTime
+  updatedAt : DateTime
+  --
+  UQ(provider, providerAccountId)
+}
+
+entity "Session" as Session {
+  * id : String <<PK>>
+  --
+  userId : String <<FK>>
+  sessionToken : String <<UQ>>
+  expiresAt : DateTime
+  ipAddress : String
+  userAgent : String
+  createdAt : DateTime
+  updatedAt : DateTime
+}
+
+entity "WalletTransaction" as WalletTransaction {
+  * id : String <<PK>>
+  --
+  publicId : String <<UQ>>
+  userId : String <<FK>>
+  type : TransactionType
+  amount : Int
+  balanceAfter : Int
+  referenceType : String
+  referenceId : String
+  description : String
+  metadata : Json
+  createdAt : DateTime
+}
+
+entity "TopUpOrder" as TopUpOrder {
+  * id : String <<PK>>
+  --
+  publicId : String <<UQ>>
+  userId : String <<FK>>
+  provider : String
+  externalId : String <<UQ>>
+  amountRupiah : Int
+  finalAmount : Int
+  status : UsageStatus
+  activityLogId : String <<FK,UQ>>
+  metadata : Json
+  createdAt : DateTime
+  updatedAt : DateTime
+}
+
+entity "UsageEvent" as UsageEvent {
+  * id : String <<PK>>
+  --
+  publicId : String <<UQ>>
+  userId : String <<FK>>
+  status : UsageStatus
+  audioDurationSec : Int
+  exportFormat : String
+  costRupiah : Int
+  metadata : Json
+  createdAt : DateTime
+  updatedAt : DateTime
+  completedAt : DateTime
+}
+
+entity "ActivityLog" as ActivityLog {
+  * id : String <<PK>>
+  --
+  userId : String <<FK>>
+  type : ActivityType
+  status : ActivityStatus
+  title : String
+  description : String
+  amountRupiah : Int
+  fileName : String
+  fileFormat : String
+  metadata : Json
+  createdAt : DateTime
+}
+
+entity "UploadRecord" as UploadRecord {
+  * id : String <<PK>>
+  --
+  publicId : String <<UQ>>
+  userId : String <<FK>>
+  fileName : String
+  source : String
+  fileFormat : String
+  durationSec : Int
+  speedFactor : Decimal
+  amplification : Decimal
+  status : UsageStatus
+  activityLogId : String <<FK,UQ>>
+  metadata : Json
+  createdAt : DateTime
+  updatedAt : DateTime
+}
+
+entity "ProductCategory" as ProductCategory {
+  * id : String <<PK>>
+  --
+  name : String
+  slug : String <<UQ>>
+  description : Text
+  icon : String
+  sortOrder : Int
+  active : Boolean
+  createdAt : DateTime
+  updatedAt : DateTime
+}
+
+entity "Product" as Product {
+  * id : String <<PK>>
+  --
+  publicId : String <<UQ>>
+  categoryId : String <<FK>>
+  name : String
+  slug : String <<UQ>>
+  description : Text
+  shortDesc : String
+  thumbnail : String
+  pricePersonal : Int
+  priceCommercial : Int
+  priceEnterprise : Int
+  featured : Boolean
+  active : Boolean
+  version : String
+  tags : String
+  createdAt : DateTime
+  updatedAt : DateTime
+}
+
+entity "ProductFile" as ProductFile {
+  * id : String <<PK>>
+  --
+  productId : String <<FK>>
+  fileName : String
+  fileType : String
+  filePath : String
+  fileSize : Int
+  version : String
+  createdAt : DateTime
+  updatedAt : DateTime
+}
+
+entity "ProductImage" as ProductImage {
+  * id : String <<PK>>
+  --
+  productId : String <<FK>>
+  url : String
+  alt : String
+  sortOrder : Int
+  createdAt : DateTime
+}
+
+entity "Purchase" as Purchase {
+  * id : String <<PK>>
+  --
+  publicId : String <<UQ>>
+  userId : String <<FK>>
+  productId : String <<FK>>
+  licenseType : LicenseType
+  amountRupiah : Int
+  status : PurchaseStatus
+  metadata : Json
+  purchasedAt : DateTime
+  updatedAt : DateTime
+}
+
+entity "License" as License {
+  * id : String <<PK>>
+  --
+  publicId : String <<UQ>>
+  userId : String <<FK>>
+  productId : String <<FK>>
+  purchaseId : String <<FK>>
+  licenseKey : String <<UQ>>
+  licenseType : LicenseType
+  status : LicenseStatus
+  maxGames : Int
+  expiresAt : DateTime
+  lastVerifiedAt : DateTime
+  metadata : Json
+  createdAt : DateTime
+  updatedAt : DateTime
+}
+
+entity "GameWhitelist" as GameWhitelist {
+  * id : String <<PK>>
+  --
+  licenseId : String <<FK>>
+  gameId : String
+  universeId : String
+  creatorId : String
+  creatorType : String
+  gameName : String
+  active : Boolean
+  verifiedAt : DateTime
+  addedAt : DateTime
+  --
+  UQ(licenseId, gameId)
+}
+
+entity "LicenseVerification" as LicenseVerification {
+  * id : String <<PK>>
+  --
+  licenseId : String <<FK>>
+  gameId : String
+  ipAddress : String
+  userAgent : String
+  success : Boolean
+  reason : String
+  verifiedAt : DateTime
+}
+
+entity "Cart" as Cart {
+  * id : String <<PK>>
+  --
+  userId : String <<FK,UQ>>
+  createdAt : DateTime
+  updatedAt : DateTime
+}
+
+entity "CartItem" as CartItem {
+  * id : String <<PK>>
+  --
+  cartId : String <<FK>>
+  productId : String <<FK>>
+  licenseType : LicenseType
+  priceRupiah : Int
+  addedAt : DateTime
+  --
+  UQ(cartId, productId)
+}
+
+' Auth and user-owned records
+User ||--o{ OAuthAccount : accounts
+User ||--o{ Session : sessions
+User ||--o{ WalletTransaction : transactions
+User ||--o{ TopUpOrder : topUpOrders
+User ||--o{ UsageEvent : usageEvents
+User ||--o{ ActivityLog : activities
+User ||--o{ UploadRecord : uploadRecords
+User ||--o{ Purchase : purchases
+User ||--o{ License : licenses
+User ||--o| Cart : cart
+
+' Activity-linked records
+ActivityLog |o--o| UploadRecord : upload activity
+ActivityLog |o--o| TopUpOrder : topup activity
+
+' Product catalog
+ProductCategory |o--o{ Product : products
+Product ||--o{ ProductFile : files
+Product ||--o{ ProductImage : images
+Product ||--o{ Purchase : purchases
+Product ||--o{ License : licenses
+Product ||--o{ CartItem : cartItems
+
+' Purchase and licensing
+Purchase ||--o{ License : licenses
+License ||--o{ GameWhitelist : whitelist
+License ||--o{ LicenseVerification : verifications
+
+' Cart
+Cart ||--o{ CartItem : items
+
+note right of PublicIdCounter
+  No foreign keys.
+  Generates readable publicId values.
+  Example scope: PUR-COM-2606.
+end note
+
+note right of License
+  publicId is for humans.
+  licenseKey is for Roblox runtime verification.
+end note
+
+@enduml

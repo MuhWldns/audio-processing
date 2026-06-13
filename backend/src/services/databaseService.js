@@ -1,305 +1,280 @@
 /**
- * Database service layer untuk atomic operations
- * Memastikan consistency dan menghindari race conditions
+ * Database service layer untuk atomic wallet operations
+ * Single source of truth: User.walletBalance (Rupiah)
+ * All mutations go through WalletTransaction ledger
  */
 
 import { prisma } from '../prisma.js';
+import { generatePublicId } from "./publicIdService.js";
 
 /**
- * Atomic operation untuk top up saldo
- * @param {string} userId - ID user
- * @param {number} amountRupiah - Jumlah top up dalam Rupiah
- * @param {Object} paymentData - Data payment dari gateway
- * @returns {Promise<Object>} Result transaction
+ * Credit wallet (add balance)
+ * Used for: top-up, refund, admin adjustment
+ * @param {string} userId
+ * @param {number} amount - Amount in Rupiah (positive)
+ * @param {Object} options - Transaction metadata
+ * @returns {Promise<Object>} Updated user + transaction record
  */
-export async function atomicTopUp(userId, amountRupiah, paymentData) {
-  return await prisma.$transaction(async (tx) => {
-    // 1. Create top up transaction record
-    const topUpTransaction = await tx.topUpTransaction.create({
-      data: {
-        userId,
-        amountRupiah,
-        paymentGateway: paymentData.gateway || 'claidex',
-        paymentId: paymentData.paymentId,
-        status: 'completed',
-        metadata: paymentData.metadata || {}
-      }
-    });
+export async function creditWallet(userId, amount, { type, referenceType, referenceId, description, metadata } = {}) {
+  if (amount <= 0) throw new Error('Credit amount must be positive');
 
-    // 2. Update user wallet balance (atomic)
-    const updatedUser = await tx.user.update({
+  return await prisma.$transaction(async (tx) => {
+    const user = await tx.user.update({
       where: { id: userId },
       data: {
-        walletBalanceRupiah: { increment: amountRupiah },
-        totalTopUpRupiah: { increment: amountRupiah }
+        walletBalance: { increment: amount },
+        totalTopUp: type === 'TOP_UP' ? { increment: amount } : undefined,
       },
       select: {
         id: true,
-        walletBalanceRupiah: true,
-        totalTopUpRupiah: true
-      }
+        walletBalance: true,
+        totalTopUp: true,
+        totalSpent: true,
+      },
     });
 
-    // 3. Create activity log
-    await tx.activityLog.create({
+    const transaction = await tx.walletTransaction.create({
       data: {
         userId,
-        type: 'TOP_UP',
-        status: 'SUCCESS',
-        title: 'Top Up Saldo',
-        description: `Top up Rp ${amountRupiah.toLocaleString('id-ID')} via ${paymentData.gateway || 'claidex'}`,
-        amountTokens: amountRupiah
-      }
+        type: type || 'TOP_UP',
+        amount,
+        balanceAfter: user.walletBalance,
+        referenceType,
+        referenceId,
+        description,
+        metadata,
+      },
     });
 
-    return {
-      transaction: topUpTransaction,
-      user: updatedUser,
-      newBalance: updatedUser.walletBalanceRupiah
-    };
+    return { user, transaction };
   });
 }
 
 /**
- * Atomic operation untuk charge service dari saldo
- * @param {string} userId - ID user
- * @param {number} amountRupiah - Jumlah yang akan di-charge
- * @param {Object} serviceData - Data service (duration, type, etc.)
- * @returns {Promise<Object>} Result transaction
- * @throws {Error} Jika saldo tidak cukup
+ * Debit wallet (deduct balance)
+ * Used for: audio charge, script purchase
+ * @param {string} userId
+ * @param {number} amount - Amount in Rupiah (positive, will be stored as negative)
+ * @param {Object} options - Transaction metadata
+ * @returns {Promise<Object>} Updated user + transaction record
+ * @throws {Error} If insufficient balance
  */
-export async function atomicChargeService(userId, amountRupiah, serviceData) {
+export async function debitWallet(userId, amount, { type, referenceType, referenceId, description, metadata } = {}) {
+  if (amount <= 0) throw new Error('Debit amount must be positive');
+
   return await prisma.$transaction(async (tx) => {
-    // 1. Lock user row untuk prevent race condition
     const user = await tx.user.findUnique({
       where: { id: userId },
-      select: { walletBalanceRupiah: true },
-      // FOR UPDATE lock (Prisma tidak support langsung, kita handle dengan transaction isolation)
+      select: { walletBalance: true },
     });
 
-    if (!user) {
-      throw new Error('User not found');
-    }
+    if (!user) throw new Error('User not found');
+    if (user.walletBalance < amount) throw new Error('Insufficient balance');
 
-    // 2. Check balance
-    if (user.walletBalanceRupiah < amountRupiah) {
-      throw new Error('Insufficient balance');
-    }
-
-    // 3. Create service transaction
-    const serviceTransaction = await tx.serviceTransaction.create({
-      data: {
-        userId,
-        amountRupiah,
-        durationSeconds: serviceData.durationSeconds || 0,
-        processingType: serviceData.processingType || 'basic',
-        serviceType: serviceData.serviceType || 'audio_processing',
-        status: 'completed',
-        metadata: serviceData.metadata || {}
-      }
-    });
-
-    // 4. Deduct from balance
-    const updatedUser = await tx.user.update({
+    const updated = await tx.user.update({
       where: { id: userId },
       data: {
-        walletBalanceRupiah: { decrement: amountRupiah },
-        totalSpentRupiah: { increment: amountRupiah }
+        walletBalance: { decrement: amount },
+        totalSpent: { increment: amount },
       },
       select: {
         id: true,
-        walletBalanceRupiah: true,
-        totalSpentRupiah: true
-      }
+        walletBalance: true,
+        totalTopUp: true,
+        totalSpent: true,
+      },
     });
 
-    // 5. Create activity log
-    await tx.activityLog.create({
+    const transaction = await tx.walletTransaction.create({
       data: {
         userId,
-        type: 'TOKEN_USAGE',
-        status: 'SUCCESS',
-        title: 'Audio Processing',
-        description: `Process audio ${serviceData.durationSeconds || 0}s - Rp ${amountRupiah.toLocaleString('id-ID')}`,
-        amountTokens: amountRupiah,
-        fileName: serviceData.fileName,
-        fileFormat: serviceData.fileFormat
-      }
+        type: type || 'AUDIO_CHARGE',
+        amount: -amount,
+        balanceAfter: updated.walletBalance,
+        referenceType,
+        referenceId,
+        description,
+        metadata,
+      },
     });
 
-    return {
-      transaction: serviceTransaction,
-      user: updatedUser,
-      remainingBalance: updatedUser.walletBalanceRupiah
-    };
+    return { user: updated, transaction };
   });
 }
 
 /**
- * Get user balance dengan consistency check
- * @param {string} userId - ID user
- * @returns {Promise<Object>} User balance info
+ * Get user balance
+ * @param {string} userId
+ * @returns {Promise<Object>} Balance info
  */
 export async function getUserBalance(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
-      walletBalanceRupiah: true,
-      totalTopUpRupiah: true,
-      totalSpentRupiah: true
-    }
+      walletBalance: true,
+      totalTopUp: true,
+      totalSpent: true,
+    },
   });
 
-  if (!user) {
-    throw new Error('User not found');
-  }
+  if (!user) throw new Error('User not found');
 
   return {
-    balanceRupiah: user.walletBalanceRupiah,
-    totalTopUpRupiah: user.totalTopUpRupiah,
-    totalSpentRupiah: user.totalSpentRupiah,
-    formattedBalance: new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0
-    }).format(user.walletBalanceRupiah)
+    balance: user.walletBalance,
+    totalTopUp: user.totalTopUp,
+    totalSpent: user.totalSpent,
   };
 }
 
 /**
  * Validate user has sufficient balance
- * @param {string} userId - ID user
- * @param {number} amountRupiah - Amount to check
- * @returns {Promise<boolean>} True jika cukup
+ * @param {string} userId
+ * @param {number} amount - Amount to check
+ * @returns {Promise<boolean>}
  */
-export async function validateBalance(userId, amountRupiah) {
+export async function validateBalance(userId, amount) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { walletBalanceRupiah: true }
+    select: { walletBalance: true },
   });
 
-  if (!user) {
-    return false;
-  }
-
-  return user.walletBalanceRupiah >= amountRupiah;
+  if (!user) return false;
+  return user.walletBalance >= amount;
 }
 
 /**
- * Get user transaction history
- * @param {string} userId - ID user
- * @param {number} limit - Limit results
- * @param {number} offset - Offset for pagination
- * @returns {Promise<Array>} Transaction history
+ * Get user transaction history (unified ledger)
+ * @param {string} userId
+ * @param {Object} options - Pagination and filter options
+ * @returns {Promise<Object>} Transactions with pagination
  */
-export async function getUserTransactionHistory(userId, limit = 20, offset = 0) {
-  const [topUps, services] = await Promise.all([
-    prisma.topUpTransaction.findMany({
-      where: { userId },
+export async function getUserTransactionHistory(userId, { limit = 20, offset = 0, type } = {}) {
+  const where = { userId };
+  if (type) where.type = type;
+
+  const [transactions, total] = await Promise.all([
+    prisma.walletTransaction.findMany({
+      where,
       orderBy: { createdAt: 'desc' },
       take: limit,
       skip: offset,
-      select: {
-        id: true,
-        amountRupiah: true,
-        status: true,
-        paymentGateway: true,
-        createdAt: true
-      }
     }),
-    prisma.serviceTransaction.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-      skip: offset,
-      select: {
-        id: true,
-        amountRupiah: true,
-        durationSeconds: true,
-        serviceType: true,
-        status: true,
-        createdAt: true
-      }
-    })
+    prisma.walletTransaction.count({ where }),
   ]);
 
-  // Combine and sort by date
-  const allTransactions = [
-    ...topUps.map(t => ({ ...t, type: 'TOP_UP' })),
-    ...services.map(t => ({ ...t, type: 'SERVICE' }))
-  ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-   .slice(0, limit);
-
-  return allTransactions.map(t => ({
-    ...t,
-    formattedAmount: new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0
-    }).format(t.amountRupiah),
-    formattedDate: new Date(t.createdAt).toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }));
+  return {
+    transactions,
+    pagination: {
+      total,
+      limit,
+      offset,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
 }
 
 /**
- * Admin function: Adjust user balance (for refunds/corrections)
- * @param {string} userId - ID user
- * @param {number} amountRupiah - Amount to adjust (positive for add, negative for deduct)
- * @param {string} reason - Reason for adjustment
- * @returns {Promise<Object>} Adjustment result
+ * Admin: Adjust user balance (refund/correction)
+ * @param {string} userId
+ * @param {number} amount - Positive to add, negative to deduct
+ * @param {string} reason
+ * @returns {Promise<Object>}
  */
-export async function adminAdjustBalance(userId, amountRupiah, reason) {
+export async function adminAdjustBalance(userId, amount, reason) {
+  if (amount === 0) throw new Error('Adjustment amount cannot be zero');
+
+  if (amount > 0) {
+    return await creditWallet(userId, amount, {
+      type: 'ADJUSTMENT',
+      description: `Admin adjustment: ${reason}`,
+    });
+  } else {
+    return await debitWallet(userId, Math.abs(amount), {
+      type: 'ADJUSTMENT',
+      description: `Admin adjustment: ${reason}`,
+    });
+  }
+}
+
+/**
+ * Credit a top-up order's wallet atomically and idempotently.
+ * Shared by Bayar.gg webhook, MustikaPay poller, and status endpoint.
+ * @param {string} orderId
+ * @param {Object} opts
+ * @param {number} [opts.verifyAmount] - provider-reported amount. Only checked when requireAmountMatch is true.
+ * @param {boolean} [opts.requireAmountMatch=false] - when true (untrusted providers like MustikaPay), verifyAmount MUST be a finite number equal to order.amountRupiah or this throws (fail-closed). When false (Bayar.gg trusts HMAC), no amount check is performed.
+ * @param {number} [opts.finalAmount] - amount actually charged by the gateway, recorded to order.finalAmount. Defaults to order.amountRupiah.
+ * @param {string} [opts.providerName="bayar.gg"]
+ * @param {Object} [opts.paymentMeta] - extra metadata to store on the order/ledger
+ * @returns {Promise<{credited:boolean, alreadyProcessed?:boolean, notFound?:boolean, userId?:string, amount?:number}>}
+ */
+export async function creditTopUpOrder(orderId, { verifyAmount, requireAmountMatch = false, finalAmount, providerName = "bayar.gg", paymentMeta = {} } = {}) {
   return await prisma.$transaction(async (tx) => {
-    const user = await tx.user.findUnique({
-      where: { id: userId },
-      select: { walletBalanceRupiah: true }
-    });
+    const order = await tx.topUpOrder.findUnique({ where: { id: orderId } });
+    if (!order) return { credited: false, notFound: true };
+    if (order.status === "COMPLETED") return { credited: false, alreadyProcessed: true, userId: order.userId };
 
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    // Validate new balance won't go negative
-    if (user.walletBalanceRupiah + amountRupiah < 0) {
-      throw new Error('Adjustment would result in negative balance');
-    }
-
-    const updateData = amountRupiah > 0 
-      ? { walletBalanceRupiah: { increment: amountRupiah } }
-      : { walletBalanceRupiah: { decrement: Math.abs(amountRupiah) } };
-
-    const updatedUser = await tx.user.update({
-      where: { id: userId },
-      data: updateData,
-      select: {
-        id: true,
-        walletBalanceRupiah: true
+    // Verify BEFORE claiming, so a mismatched order is never claimed/credited.
+    // Fail-closed for untrusted providers: verifyAmount must be a finite number that matches.
+    if (requireAmountMatch) {
+      if (!Number.isFinite(verifyAmount) || verifyAmount !== order.amountRupiah) {
+        throw new Error(`Top-up amount verification failed: provider ${verifyAmount} != order ${order.amountRupiah}`);
       }
+    }
+
+    // Atomic compare-and-swap claim: only one concurrent tx wins the PENDING->COMPLETED flip.
+    const claim = await tx.topUpOrder.updateMany({
+      where: { id: order.id, status: "PENDING" },
+      data: { status: "COMPLETED" },
+    });
+    if (claim.count === 0) {
+      return { credited: false, alreadyProcessed: true, userId: order.userId };
+    }
+
+    const amount = order.amountRupiah;
+
+    const user = await tx.user.update({
+      where: { id: order.userId },
+      data: { walletBalance: { increment: amount }, totalTopUp: { increment: amount } },
+      select: { walletBalance: true },
     });
 
-    // Create adjustment record
+    const transactionPublicId = await generatePublicId(tx, "TXN", "TOP");
+    await tx.walletTransaction.create({
+      data: {
+        publicId: transactionPublicId,
+        userId: order.userId,
+        type: "TOP_UP",
+        amount,
+        balanceAfter: user.walletBalance,
+        referenceType: "TOP_UP_ORDER",
+        referenceId: order.id,
+        description: `Top up Rp ${amount.toLocaleString("id-ID")} via ${providerName}`,
+        metadata: paymentMeta,
+      },
+    });
+
     await tx.activityLog.create({
       data: {
-        userId,
-        type: amountRupiah > 0 ? 'TOP_UP' : 'TOKEN_USAGE',
-        status: 'INFO',
-        title: 'Balance Adjustment',
-        description: `Admin adjustment: ${reason} - Rp ${Math.abs(amountRupiah).toLocaleString('id-ID')}`,
-        amountTokens: Math.abs(amountRupiah)
-      }
+        userId: order.userId,
+        type: "TOP_UP",
+        status: "SUCCESS",
+        title: "Top up successful",
+        description: `Top up Rp ${amount.toLocaleString("id-ID")}`,
+        amountRupiah: amount,
+        metadata: paymentMeta,
+      },
     });
 
-    return {
-      userId,
-      adjustment: amountRupiah,
-      newBalance: updatedUser.walletBalanceRupiah,
-      reason
-    };
+    // Status already flipped to COMPLETED in the claim step; only record finalAmount + metadata.
+    await tx.topUpOrder.update({
+      where: { id: order.id },
+      data: {
+        finalAmount: typeof finalAmount === "number" ? finalAmount : amount,
+        metadata: { ...(order.metadata || {}), ...paymentMeta },
+      },
+    });
+
+    return { credited: true, userId: order.userId, amount };
   });
 }

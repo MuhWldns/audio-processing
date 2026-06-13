@@ -12,10 +12,15 @@ enum AuthProvider {
   DISCORD
 }
 
-enum TokenTransactionType {
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum TransactionType {
   TOP_UP
-  RESERVE
-  SETTLE
+  PURCHASE
+  AUDIO_CHARGE
   REFUND
   ADJUSTMENT
 }
@@ -48,40 +53,46 @@ enum ActivityStatus {
 
 model User {
   id             String            @id @default(cuid())
+  publicId       String?           @unique @db.VarChar(32)
   username       String?           @unique @db.VarChar(191)
   fullName       String?           @db.VarChar(191)
   email          String?           @unique @db.VarChar(191)
   displayName    String?           @db.VarChar(191)
   avatarUrl      String?           @db.VarChar(512)
-  isEmailVerified Boolean           @default(false)
+  role           UserRole          @default(USER)
+  isEmailVerified Boolean          @default(false)
+  robloxUserId   String?           @db.VarChar(64)
   lastLoginAt    DateTime?
   lastLoginProvider AuthProvider?
-  freeAudioDateKey String?         @db.VarChar(10)
-  freeAudioUsedToday Int            @default(0)
-  freeAudioDailyLimit Int           @default(3)
-  paidAudioTokenCost Int            @default(1)
-  // Rupiah wallet fields
-  walletBalanceRupiah Int           @default(0)
-  totalTopUpRupiah    Int           @default(0)
-  totalSpentRupiah    Int           @default(0)
+  // Audio free quota
+  freeAudioDateKey   String?       @db.VarChar(10)
+  freeAudioUsedToday Int           @default(0)
+  freeAudioDailyLimit Int          @default(3)
+  paidAudioCost      Int           @default(2000)
+  // Wallet (single source of truth, in Rupiah)
+  walletBalance      Int           @default(0)
+  totalTopUp         Int           @default(0)
+  totalSpent         Int           @default(0)
+  // Timestamps
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
+  // Relations
   accounts       OAuthAccount[]
   sessions       Session[]
-  wallet         Wallet?
-  tokenLedger    TokenTransaction[]
+  transactions   WalletTransaction[]
   usageEvents    UsageEvent[]
   activities     ActivityLog[]
   uploadRecords  UploadRecord[]
   topUpOrders    TopUpOrder[]
-  topUpTransactions TopUpTransaction[]
-  serviceTransactions ServiceTransaction[]
+  licenses       License[]
+  purchases      Purchase[]
+  cart           Cart?
 
   @@index([email])
   @@index([username])
   @@index([lastLoginAt])
-  @@index([walletBalanceRupiah])
-  @@index([totalSpentRupiah])
+  @@index([walletBalance])
+  @@index([totalSpent])
 }
 
 model OAuthAccount {
@@ -118,59 +129,76 @@ model Session {
   @@index([expiresAt])
 }
 
-model Wallet {
-  id               String   @id @default(cuid())
-  userId           String   @unique
-  balanceTokens    Int      @default(0)
-  reservedTokens   Int      @default(0)
-  lifetimeTopUp    Int      @default(0)
-  lifetimeSpent    Int      @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions     TokenTransaction[]
-  usageEvents      UsageEvent[]
-  topUpOrders      TopUpOrder[]
+// ==================== WALLET & TRANSACTIONS ====================
+
+model PublicIdCounter {
+  id         String   @id @default(cuid())
+  scope      String   @unique @db.VarChar(32)
+  nextNumber Int      @default(1)
+  updatedAt  DateTime @updatedAt
 }
 
-model TokenTransaction {
-  id             String                @id @default(cuid())
-  userId         String
-  walletId       String
-  type           TokenTransactionType
-  amountTokens   Int
-  referenceType  String?               @db.VarChar(64)
-  referenceId    String?               @db.VarChar(191)
-  memo           String?               @db.VarChar(512)
-  createdAt      DateTime              @default(now())
-  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  wallet         Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
+model WalletTransaction {
+  id              String          @id @default(cuid())
+  publicId        String?         @unique @db.VarChar(32)
+  userId          String
+  type            TransactionType
+  amount          Int             // positive = credit, negative = debit
+  balanceAfter    Int             // snapshot balance after this transaction
+  referenceType   String?         @db.VarChar(64)   // "TOP_UP_ORDER", "PURCHASE", "USAGE_EVENT"
+  referenceId     String?         @db.VarChar(191)  // ID of related record
+  description     String?         @db.VarChar(512)
+  metadata        Json?
+  createdAt       DateTime        @default(now())
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([walletId])
   @@index([type])
   @@index([referenceType, referenceId])
+  @@index([createdAt])
 }
+
+model TopUpOrder {
+  id            String       @id @default(cuid())
+  publicId      String?      @unique @db.VarChar(32)
+  userId        String
+  provider      String       @db.VarChar(64)          // "bayar.gg"
+  externalId    String?      @unique @db.VarChar(191) // invoice_id from gateway
+  amountRupiah  Int                                   // amount requested
+  finalAmount   Int?                                  // amount actually paid (with unique code)
+  status        UsageStatus  @default(PENDING)        // PENDING, COMPLETED, FAILED, CANCELED
+  activityLogId String?      @unique
+  metadata      Json?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activityLog   ActivityLog? @relation("TopUpOrderActivityLog", fields: [activityLogId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([provider])
+}
+
+// ==================== AUDIO PROCESSING ====================
 
 model UsageEvent {
   id                String       @id @default(cuid())
+  publicId          String?      @unique @db.VarChar(32)
   userId            String
-  walletId          String
   status            UsageStatus  @default(PENDING)
   audioDurationSec  Int
   exportFormat      String       @db.VarChar(32)
-  tokenCost         Int
-  reservedTokens    Int          @default(0)
-  settledTokens     Int          @default(0)
+  costRupiah        Int
   metadata          Json?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
   completedAt       DateTime?
+
   user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  wallet            Wallet       @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([walletId])
   @@index([status])
 }
 
@@ -181,7 +209,7 @@ model ActivityLog {
   status        ActivityStatus  @default(INFO)
   title         String          @db.VarChar(191)
   description   String?         @db.VarChar(512)
-  amountTokens  Int?
+  amountRupiah  Int?
   fileName      String?         @db.VarChar(255)
   fileFormat    String?         @db.VarChar(32)
   metadata      Json?
@@ -198,6 +226,7 @@ model ActivityLog {
 
 model UploadRecord {
   id             String       @id @default(cuid())
+  publicId       String?      @unique @db.VarChar(32)
   userId         String
   fileName       String       @db.VarChar(255)
   source         String?      @db.VarChar(64)
@@ -218,64 +247,218 @@ model UploadRecord {
   @@index([fileFormat])
 }
 
-model TopUpOrder {
-  id            String       @id @default(cuid())
-  userId        String
-  walletId      String
-  provider      String       @db.VarChar(64)
-  externalId    String?      @unique @db.VarChar(191)
-  currency      String       @db.VarChar(16)
-  amountPaid    Decimal      @db.Decimal(12, 2)
-  tokensBought  Int
-  status        UsageStatus  @default(PENDING)
-  activityLogId String?      @unique
-  metadata      Json?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  wallet        Wallet       @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  activityLog   ActivityLog? @relation("TopUpOrderActivityLog", fields: [activityLogId], references: [id], onDelete: SetNull)
+// ==================== SCRIPT STORE MODELS ====================
 
-  @@index([userId])
-  @@index([walletId])
-  @@index([status])
-  @@index([provider])
+enum LicenseType {
+  PERSONAL
+  COMMERCIAL
+  ENTERPRISE
 }
 
-model TopUpTransaction {
-  id              String   @id @default(cuid())
-  userId          String
-  amountRupiah    Int      // Jumlah top up dalam Rupiah
-  paymentGateway  String   @db.VarChar(64)  // 'midtrans', 'xendit', etc.
-  paymentId       String?  @unique @db.VarChar(191)  // ID dari payment gateway
-  status          String   @db.VarChar(32) @default("pending")  // pending, completed, failed, refunded
-  metadata        Json?    // Payment gateway response data
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+enum LicenseStatus {
+  ACTIVE
+  SUSPENDED
+  REVOKED
+  EXPIRED
+}
 
-  @@index([userId])
-  @@index([status])
-  @@index([paymentGateway])
+enum PurchaseStatus {
+  PENDING
+  COMPLETED
+  REFUNDED
+  FAILED
+}
+
+model ProductCategory {
+  id          String    @id @default(cuid())
+  name        String    @db.VarChar(100)
+  slug        String    @unique @db.VarChar(100)
+  description String?   @db.Text
+  icon        String?   @db.VarChar(64)
+  sortOrder   Int       @default(0)
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  products    Product[]
+
+  @@index([slug])
+  @@index([active])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  publicId    String?  @unique @db.VarChar(32)
+  categoryId  String?
+  name        String   @db.VarChar(191)
+  slug        String   @unique @db.VarChar(191)
+  description String   @db.Text
+  shortDesc   String?  @db.VarChar(255)
+  thumbnail   String?  @db.VarChar(512)
+  // Pricing per tier (in Rupiah)
+  pricePersonal    Int       @default(0)
+  priceCommercial  Int       @default(0)
+  priceEnterprise  Int       @default(0)
+  featured    Boolean  @default(false)
+  active      Boolean  @default(true)
+  version     String   @db.VarChar(32) @default("1.0.0")
+  tags        String?  @db.VarChar(512) // comma-separated tags
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  category    ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  files       ProductFile[]
+  images      ProductImage[]
+  licenses    License[]
+  purchases   Purchase[]
+  cartItems   CartItem[]
+
+  @@index([categoryId])
+  @@index([slug])
+  @@index([active])
+  @@index([featured])
   @@index([createdAt])
 }
 
-model ServiceTransaction {
-  id              String   @id @default(cuid())
+model ProductFile {
+  id          String   @id @default(cuid())
+  productId   String
+  fileName    String   @db.VarChar(255)
+  fileType    String   @db.VarChar(32) // "script", "documentation", "asset"
+  filePath    String   @db.VarChar(512)
+  fileSize    Int?     // bytes
+  version     String   @db.VarChar(32) @default("1.0.0")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([fileType])
+}
+
+model ProductImage {
+  id          String   @id @default(cuid())
+  productId   String
+  url         String   @db.VarChar(512)
+  alt         String?  @db.VarChar(191)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model License {
+  id              String        @id @default(cuid())
+  publicId        String?       @unique @db.VarChar(32)
   userId          String
-  amountRupiah    Int      // Biaya service dalam Rupiah
-  durationSeconds Int      // Durasi processing dalam detik
-  processingType  String   @db.VarChar(32) @default("basic")  // basic, advanced
-  serviceType     String   @db.VarChar(32) @default("audio_processing")  // audio_processing, export, etc.
-  status          String   @db.VarChar(32) @default("pending")  // pending, completed, failed
-  metadata        Json?    // File info, processing parameters
-  createdAt       DateTime @default(now())
-  
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId       String
+  purchaseId      String
+  licenseKey      String        @unique @db.VarChar(191)
+  licenseType     LicenseType
+  status          LicenseStatus @default(ACTIVE)
+  maxGames        Int?          // null = unlimited (Enterprise)
+  expiresAt       DateTime?     // null = lifetime
+  lastVerifiedAt  DateTime?
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  purchase        Purchase      @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  gameWhitelist   GameWhitelist[]
+  verifications   LicenseVerification[]
 
   @@index([userId])
+  @@index([productId])
+  @@index([purchaseId])
+  @@index([licenseKey])
   @@index([status])
-  @@index([serviceType])
-  @@index([createdAt])
+}
+
+model GameWhitelist {
+  id          String   @id @default(cuid())
+  licenseId   String
+  gameId      String   @db.VarChar(64) // Roblox placeId
+  universeId  String?  @db.VarChar(64) // Resolved from Roblox API
+  creatorId   String?  @db.VarChar(64) // Creator (User ID or Group ID)
+  creatorType String?  @db.VarChar(16) // "User" or "Group"
+  gameName    String?  @db.VarChar(191)
+  active      Boolean  @default(true)
+  verifiedAt  DateTime? // When ownership was verified via Roblox API
+  addedAt     DateTime @default(now())
+
+  license     License  @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+
+  @@unique([licenseId, gameId])
+  @@index([licenseId])
+  @@index([gameId])
+}
+
+model LicenseVerification {
+  id          String   @id @default(cuid())
+  licenseId   String
+  gameId      String   @db.VarChar(64)
+  ipAddress   String?  @db.VarChar(64)
+  userAgent   String?  @db.VarChar(512)
+  success     Boolean
+  reason      String?  @db.VarChar(255)
+  verifiedAt  DateTime @default(now())
+
+  license     License  @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+
+  @@index([licenseId])
+  @@index([gameId])
+  @@index([verifiedAt])
+}
+
+model Purchase {
+  id              String         @id @default(cuid())
+  publicId        String?        @unique @db.VarChar(32)
+  userId          String
+  productId       String
+  licenseType     LicenseType
+  amountRupiah    Int
+  status          PurchaseStatus @default(PENDING)
+  metadata        Json?
+  purchasedAt     DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product         Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  licenses        License[]
+
+  @@index([userId])
+  @@index([productId])
+  @@index([status])
+  @@index([purchasedAt])
+}
+
+model Cart {
+  id        String     @id @default(cuid())
+  userId    String     @unique
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     CartItem[]
+}
+
+model CartItem {
+  id          String      @id @default(cuid())
+  cartId      String
+  productId   String
+  licenseType LicenseType
+  priceRupiah Int         // price snapshot at time of adding
+  addedAt     DateTime    @default(now())
+
+  cart        Cart        @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([cartId, productId])
+  @@index([cartId])
+  @@index([productId])
 }

@@ -6,33 +6,16 @@ import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { Strategy as DiscordStrategy } from "passport-discord";
 import { prisma } from "../prisma.js";
+import { generatePublicId } from "./publicIdService.js";
 
 const googleScopes = ["email", "profile"];
 const discordScopes = ["identify", "email"];
 const DEFAULT_DAILY_FREE_AUDIO_LIMIT = 3;
-const DEFAULT_PAID_AUDIO_TOKEN_COST = 1;
+const DEFAULT_PAID_AUDIO_COST = 2000;
 
 // Helper functions
 const toIsoStringOrNull = (value) => (value ? new Date(value).toISOString() : null);
 export const getDateKey = (date = new Date()) => date.toISOString().slice(0, 10);
-
-/**
- * Cek apakah wallet untuk user sudah ada, jika belum buat
- * @param {string} userId - ID user
- * @returns {Promise<Object>} Wallet object
- */
-export const ensureWallet = async (userId) => {
-  const wallet = await prisma.wallet.findUnique({ where: { userId } });
-  if (wallet) {
-    return wallet;
-  }
-
-  return await prisma.wallet.create({
-    data: {
-      userId,
-    },
-  });
-};
 
 /**
  * Mapping Google profile ke format internal
@@ -75,7 +58,80 @@ export const mapDiscordProfile = (profile) => {
  * @param {Object} params - OAuth parameters
  * @returns {Promise<Object>} User object
  */
-export const upsertOAuthUser = async ({ provider, providerAccountId, email, displayName, avatarUrl, accessToken, refreshToken, expiresAt, scope, tokenType, idToken }) => {
+async function findOAuthAccount({ provider, providerAccountId }) {
+  return await prisma.oAuthAccount.findUnique({
+    where: {
+      provider_providerAccountId: {
+        provider,
+        providerAccountId,
+      },
+    },
+    include: {
+      user: true,
+    },
+  });
+}
+
+async function updateExistingOAuthAccount(account, { provider, email, displayName, avatarUrl, accessToken, refreshToken, expiresAt, scope, tokenType, idToken }) {
+  return await prisma.$transaction(async (tx) => {
+    const updatedUser = await tx.user.update({
+      where: { id: account.userId },
+      data: {
+        email: account.user.email ?? email ?? undefined,
+        displayName: displayName ?? account.user.displayName ?? undefined,
+        avatarUrl: avatarUrl ?? account.user.avatarUrl ?? undefined,
+        lastLoginAt: new Date(),
+        lastLoginProvider: provider,
+      },
+    });
+
+    await tx.oAuthAccount.update({
+      where: { id: account.id },
+      data: {
+        accessToken,
+        refreshToken,
+        expiresAt,
+        scope,
+        tokenType,
+        idToken,
+      },
+    });
+
+    return updatedUser;
+  });
+}
+
+async function createOAuthUser({ provider, providerAccountId, email, displayName, avatarUrl, accessToken, refreshToken, expiresAt, scope, tokenType, idToken }) {
+  return await prisma.$transaction(async (tx) => {
+    const publicId = await generatePublicId(tx, "ACC", "IDN");
+
+    return await tx.user.create({
+      data: {
+        publicId,
+        email,
+        displayName,
+        avatarUrl,
+        lastLoginAt: new Date(),
+        lastLoginProvider: provider,
+        accounts: {
+          create: {
+            provider,
+            providerAccountId,
+            accessToken,
+            refreshToken,
+            expiresAt,
+            scope,
+            tokenType,
+            idToken,
+          },
+        },
+      },
+    });
+  });
+}
+
+async function upsertOAuthUserOnce(params, { retryOnUniqueConflict = true } = {}) {
+  const { provider, providerAccountId } = params;
   const account = await prisma.oAuthAccount.findUnique({
     where: {
       provider_providerAccountId: {
@@ -89,61 +145,26 @@ export const upsertOAuthUser = async ({ provider, providerAccountId, email, disp
   });
 
   if (account) {
-    const user = await prisma.user.update({
-      where: { id: account.userId },
-      data: {
-        email: account.user.email ?? email ?? undefined,
-        displayName: displayName ?? account.user.displayName ?? undefined,
-        avatarUrl: avatarUrl ?? account.user.avatarUrl ?? undefined,
-        lastLoginAt: new Date(),
-        lastLoginProvider: provider,
-      },
-    });
-
-    await prisma.oAuthAccount.update({
-      where: { id: account.id },
-      data: {
-        accessToken,
-        refreshToken,
-        expiresAt,
-        scope,
-        tokenType,
-        idToken,
-      },
-    });
-
-    await ensureWallet(user.id);
-
-    return user;
+    return await updateExistingOAuthAccount(account, params);
   }
 
-  const user = await prisma.user.create({
-    data: {
-      email,
-      displayName,
-      avatarUrl,
-      lastLoginAt: new Date(),
-      lastLoginProvider: provider,
-      accounts: {
-        create: {
-          provider,
-          providerAccountId,
-          accessToken,
-          refreshToken,
-          expiresAt,
-          scope,
-          tokenType,
-          idToken,
-        },
-      },
-      wallet: {
-        create: {},
-      },
-    },
-  });
+  try {
+    return await createOAuthUser(params);
+  } catch (error) {
+    if (error?.code !== "P2002" || !retryOnUniqueConflict) {
+      throw error;
+    }
 
-  return user;
-};
+    const existingAccount = await findOAuthAccount({ provider, providerAccountId });
+    if (!existingAccount) {
+      throw error;
+    }
+
+    return await updateExistingOAuthAccount(existingAccount, params);
+  }
+}
+
+export const upsertOAuthUser = async (params) => upsertOAuthUserOnce(params);
 
 /**
  * Konfigurasi passport untuk OAuth
@@ -158,9 +179,6 @@ export function configurePassport() {
     try {
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        include: {
-          wallet: true,
-        },
       });
 
       done(null, user ?? false);
@@ -288,7 +306,6 @@ export async function createAuthActivity(userId, type, title, description) {
 export async function handleOAuthLogin({ userId, provider, providerLabel }) {
   await attachLoginMetadata(userId, provider);
   await createAuthActivity(userId, "LOGIN", "Signed in", `Signed in with ${providerLabel}`);
-  await ensureWallet(userId);
 }
 
 /**
@@ -304,7 +321,7 @@ export async function ensureDailyAudioQuota(userId) {
       freeAudioDateKey: true,
       freeAudioUsedToday: true,
       freeAudioDailyLimit: true,
-      paidAudioTokenCost: true,
+      paidAudioCost: true,
     },
   });
 
@@ -323,14 +340,14 @@ export async function ensureDailyAudioQuota(userId) {
       freeAudioDateKey: todayKey,
       freeAudioUsedToday: 0,
       freeAudioDailyLimit: user.freeAudioDailyLimit ?? DEFAULT_DAILY_FREE_AUDIO_LIMIT,
-      paidAudioTokenCost: user.paidAudioTokenCost ?? DEFAULT_PAID_AUDIO_TOKEN_COST,
+      paidAudioCost: user.paidAudioCost ?? DEFAULT_PAID_AUDIO_COST,
     },
     select: {
       id: true,
       freeAudioDateKey: true,
       freeAudioUsedToday: true,
       freeAudioDailyLimit: true,
-      paidAudioTokenCost: true,
+      paidAudioCost: true,
     },
   });
 }
@@ -343,7 +360,7 @@ export async function ensureDailyAudioQuota(userId) {
  */
 export function getAudioUsagePrice(user, requestedAudioCount = 1) {
   const dailyLimit = user.freeAudioDailyLimit ?? DEFAULT_DAILY_FREE_AUDIO_LIMIT;
-  const paidCost = user.paidAudioTokenCost ?? DEFAULT_PAID_AUDIO_TOKEN_COST;
+  const paidCost = user.paidAudioCost ?? DEFAULT_PAID_AUDIO_COST;
   const freeUsed = user.freeAudioUsedToday ?? 0;
   const freeRemaining = Math.max(0, dailyLimit - freeUsed);
   const freeCovered = Math.min(requestedAudioCount, freeRemaining);
@@ -352,7 +369,7 @@ export function getAudioUsagePrice(user, requestedAudioCount = 1) {
   return {
     freeCovered,
     paidUnits,
-    tokenCost: paidUnits * paidCost,
+    cost: paidUnits * paidCost,
     freeRemaining,
     dailyLimit,
   };
@@ -383,7 +400,7 @@ export async function recordAudioUsage(userId, usedCount = 1) {
       freeAudioDateKey: true,
       freeAudioUsedToday: true,
       freeAudioDailyLimit: true,
-      paidAudioTokenCost: true,
+      paidAudioCost: true,
     },
   });
 }
@@ -413,7 +430,6 @@ export async function buildMePayload(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: {
-      wallet: true,
       accounts: true,
     },
   });
@@ -424,6 +440,7 @@ export async function buildMePayload(userId) {
 
   return {
     id: user.id,
+    publicId: user.publicId,
     email: user.email,
     username: user.username,
     fullName: user.fullName,
@@ -431,19 +448,16 @@ export async function buildMePayload(userId) {
     avatarUrl: user.avatarUrl,
     lastLoginAt: toIsoStringOrNull(user.lastLoginAt),
     lastLoginProvider: user.lastLoginProvider,
-    wallet: user.wallet
-      ? {
-          balanceTokens: user.wallet.balanceTokens,
-          reservedTokens: user.wallet.reservedTokens,
-          lifetimeTopUp: user.wallet.lifetimeTopUp,
-          lifetimeSpent: user.wallet.lifetimeSpent,
-        }
-      : null,
+    role: user.role,
+    robloxUserId: user.robloxUserId || null,
+    walletBalance: user.walletBalance,
+    totalTopUp: user.totalTopUp,
+    totalSpent: user.totalSpent,
     freeAudio: {
       dateKey: user.freeAudioDateKey ?? getDateKey(),
       usedToday: user.freeAudioUsedToday ?? 0,
       dailyLimit: user.freeAudioDailyLimit ?? DEFAULT_DAILY_FREE_AUDIO_LIMIT,
-      paidAudioTokenCost: user.paidAudioTokenCost ?? DEFAULT_PAID_AUDIO_TOKEN_COST,
+      paidAudioCost: user.paidAudioCost ?? DEFAULT_PAID_AUDIO_COST,
     },
     providers: user.accounts.map((account) => account.provider),
   };
