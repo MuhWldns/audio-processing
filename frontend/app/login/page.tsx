@@ -1,15 +1,21 @@
 'use client';
 
-import { useRouter } from "next/navigation";
+import { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { authUrls } from "@/lib/api/auth";
 
-export default function LoginPage() {
+function LoginContent() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Honor the ?redirect= the middleware set, but only same-origin paths
+  // (reject absolute URLs and protocol-relative "//host" to avoid open redirect).
+  const rawRedirect = searchParams.get("redirect");
+  const redirectTo = rawRedirect && rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/audio/studio";
 
   if (!isLoading && user) {
-    router.push("/audio/studio");
+    router.push(redirectTo);
     return null;
   }
 
@@ -43,5 +49,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginContent />
+    </Suspense>
   );
 }
