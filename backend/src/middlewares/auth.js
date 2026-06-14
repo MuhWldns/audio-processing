@@ -3,7 +3,7 @@
  */
 
 import { isOAuthReady } from "../services/authService.js";
-import { verifyAccessToken } from "../services/authTokenService.js";
+import { verifyAccessToken, parseBearerToken } from "../services/authTokenService.js";
 import { prisma } from "../prisma.js";
 
 /**
@@ -36,12 +36,11 @@ export const ensureAuthReady = (provider) => (req, res, next) => {
  * @param {Function} next - Express next function
  */
 export const requireAuth = async (req, res, next) => {
-  const header = req.get("authorization") || "";
-  const match = /^Bearer\s+(.+)$/i.exec(header);
-  if (match) {
+  const token = parseBearerToken(req);
+  if (token) {
     let payload;
     try {
-      payload = verifyAccessToken(match[1]);
+      payload = verifyAccessToken(token);
     } catch (err) {
       const code = err?.code === "token_expired" ? "token_expired" : "invalid_token";
       return res.status(401).json({ error: code });

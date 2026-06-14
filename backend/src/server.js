@@ -16,7 +16,7 @@ import { configurePassport } from "./services/authService.js";
 import { ensureAuthReady, requireAuth, createUploadLimiter, validateApiKey, validateAudioFile, requireAdmin, asyncHandler } from "./middlewares/index.js";
 import { configureMulter } from "./services/uploadService.js";
 import { startTopUpPoller } from "./services/topupPoller.js";
-import { signOAuthState } from "./services/authTokenService.js";
+import { signOAuthState, parseBearerToken } from "./services/authTokenService.js";
 import { validate } from "./validators/index.js";
 import {
   createTopUpSchema,
@@ -180,9 +180,8 @@ const refreshLimiter = createUploadLimiter({
   windowMinutes: 1,
   maxRequests: 30,
   keyGenerator: (req) => {
-    const header = req.get("authorization") || "";
-    const m = /^Bearer\s+(.+)$/i.exec(header);
-    return m ? `bearer:${m[1].slice(0, 16)}` : req.ip;
+    const token = parseBearerToken(req);
+    return token ? `bearer:${token.slice(0, 16)}` : req.ip;
   },
   message: { error: "Too many refresh attempts, please slow down." },
 });

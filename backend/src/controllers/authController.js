@@ -12,6 +12,8 @@ import {
   revokeAllSessionsForUser,
   verifyAccessToken,
   verifyOAuthState,
+  parseBearerToken,
+  getAccessTtlSeconds,
 } from "../services/authTokenService.js";
 
 const getFrontendUrl = () =>
@@ -144,11 +146,10 @@ export const handleRefresh = async (req, res) => {
     // identify the user via verify (rejects expired/invalid). On success,
     // revoke all of that user's sessions. On failure, we can't safely
     // identify the user — skip revoke rather than risk wrong-user logout.
-    const header = req.get("authorization") || "";
-    const m = /^Bearer\s+(.+)$/i.exec(header);
-    if (m) {
+    const bearer = parseBearerToken(req);
+    if (bearer) {
       try {
-        const decoded = verifyAccessToken(m[1]);
+        const decoded = verifyAccessToken(bearer);
         if (decoded?.sub) await revokeAllSessionsForUser(decoded.sub);
       } catch {
         // ignore — can't identify the user, so we can't revoke
@@ -161,10 +162,9 @@ export const handleRefresh = async (req, res) => {
   if (!user) return res.status(401).json({ error: "refresh_invalid" });
 
   const access = signAccessToken(user.id, user.role);
-  const ttlSeconds = (Number(process.env.ACCESS_TOKEN_TTL_DAYS) || 7) * 24 * 60 * 60;
   return res.status(200).json({
     access,
     refresh: rotated.token,
-    expiresIn: ttlSeconds,
+    expiresIn: getAccessTtlSeconds(),
   });
 };

@@ -10,10 +10,22 @@ const getJwtSecret = () => {
   return secret;
 };
 
-const getAccessTtlSeconds = () => {
+export const getAccessTtlSeconds = () => {
   const days = Number(process.env.ACCESS_TOKEN_TTL_DAYS) || 7;
   return days * 24 * 60 * 60;
 };
+
+/**
+ * Extract Bearer token from an Express request's Authorization header.
+ * Falls back to req.headers.authorization for callers (e.g. rate-limit
+ * keyGenerators) where the Express `req.get` helper may not be wired.
+ * Returns the raw token string or null if absent / malformed.
+ */
+export function parseBearerToken(req) {
+  const header = req.get?.("authorization") || req.headers?.authorization || "";
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  return match ? match[1] : null;
+}
 
 const getRefreshTtlMs = () => {
   const days = Number(process.env.REFRESH_TOKEN_TTL_DAYS) || 30;
