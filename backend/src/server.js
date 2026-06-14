@@ -37,6 +37,7 @@ import {
   handleDiscordCallback,
   handleLogout,
   handleGetMe,
+  handleRefresh,
   handleUpload,
   handleGetHistory,
   handleDownloadHistory,
@@ -172,6 +173,20 @@ const topupStatusLimiter = createUploadLimiter({
   message: { error: "Too many status checks, please slow down." },
 });
 
+// Rate limiter for /auth/refresh. Keyed by Bearer token prefix when present
+// (so distinct mobile clients on a shared NAT don't block each other), falling
+// back to req.ip otherwise.
+const refreshLimiter = createUploadLimiter({
+  windowMinutes: 1,
+  maxRequests: 30,
+  keyGenerator: (req) => {
+    const header = req.get("authorization") || "";
+    const m = /^Bearer\s+(.+)$/i.exec(header);
+    return m ? `bearer:${m[1].slice(0, 16)}` : req.ip;
+  },
+  message: { error: "Too many refresh attempts, please slow down." },
+});
+
 // Memory-based multer for admin file uploads (goes to B2, not local disk)
 const adminFileUpload = multer({
   storage: multer.memoryStorage(),
@@ -225,6 +240,7 @@ app.get("/auth/discord/callback", ensureAuthReady("discord"), passport.authentic
 
 app.post("/auth/logout", requireAuth, handleLogout);
 app.get("/auth/me", handleGetMe);
+app.post("/auth/refresh", refreshLimiter, asyncHandler(handleRefresh));
 
 // Upload routes
 app.post("/upload", requireAuth, uploadLimiter, validateApiKey(apiKey), upload.single("file"), validateAudioFile(), handleUpload);

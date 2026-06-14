@@ -16,8 +16,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
 import express from "express";
 import { mockPrisma } from "../helpers/mockPrisma.js";
-import { signOAuthState, verifyAccessToken } from "../../src/services/authTokenService.js";
-import { handleGoogleCallback } from "../../src/controllers/authController.js";
+import { signOAuthState, verifyAccessToken, signAccessToken } from "../../src/services/authTokenService.js";
+import { handleGoogleCallback, handleRefresh } from "../../src/controllers/authController.js";
 
 function buildCallbackApp(overrideUser) {
   const app = express();
@@ -91,5 +91,96 @@ describe("OAuth callback — mobile branch", () => {
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe("https://rbxroyale.dev/?login=failed");
     expect(mockPrisma.session.create).not.toHaveBeenCalled();
+  });
+});
+
+function buildRefreshApp() {
+  const app = express();
+  app.use(express.json());
+  app.post("/auth/refresh", async (req, res, next) => {
+    try { await handleRefresh(req, res); } catch (err) { next(err); }
+  });
+  app.use((err, req, res, next) => res.status(500).json({ error: err.message }));
+  return app;
+}
+
+describe("POST /auth/refresh", () => {
+  beforeEach(() => {
+    mockPrisma.session.findUnique.mockReset();
+    mockPrisma.session.delete.mockReset();
+    mockPrisma.session.create.mockReset();
+    mockPrisma.session.deleteMany.mockReset();
+    mockPrisma.user.findUnique.mockReset();
+    mockPrisma.$transaction.mockReset();
+    // Restore the default $transaction behavior so callbacks work, but still
+    // allow tests to override with mockResolvedValueOnce for array forms.
+    mockPrisma.$transaction.mockImplementation(async (arg) => {
+      if (typeof arg === "function") return await arg(mockPrisma);
+      return arg;
+    });
+  });
+
+  it("returns new access and refresh tokens for a valid refresh", async () => {
+    const refreshRaw = "fake-refresh-input";
+    mockPrisma.session.findUnique.mockResolvedValueOnce({
+      id: "s-rotate", userId: "u-rotate", sessionToken: "any-hash",
+      expiresAt: new Date(Date.now() + 1_000_000),
+    });
+    mockPrisma.user.findUnique.mockResolvedValueOnce({ id: "u-rotate", role: "USER" });
+    mockPrisma.$transaction.mockResolvedValueOnce([{}, { id: "s-new" }]);
+
+    const res = await request(buildRefreshApp())
+      .post("/auth/refresh")
+      .send({ refresh: refreshRaw });
+    expect(res.status).toBe(200);
+    expect(res.body.access).toBeTruthy();
+    expect(res.body.refresh).toBeTruthy();
+    expect(res.body.refresh).not.toBe(refreshRaw);
+    const ttlSeconds = 7 * 24 * 60 * 60;
+    expect(res.body.expiresIn).toBe(ttlSeconds);
+  });
+
+  it("returns 400 when refresh body field is missing", async () => {
+    const res = await request(buildRefreshApp())
+      .post("/auth/refresh")
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/refresh/);
+  });
+
+  it("returns 401 refresh_invalid for an unknown token", async () => {
+    mockPrisma.session.findUnique.mockResolvedValueOnce(null);
+    const res = await request(buildRefreshApp())
+      .post("/auth/refresh")
+      .send({ refresh: "definitely-not-a-real-token" });
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("refresh_invalid");
+  });
+
+  it("returns 401 refresh_invalid for an expired session row", async () => {
+    mockPrisma.session.findUnique.mockResolvedValueOnce({
+      id: "s1", userId: "u1", sessionToken: "x",
+      expiresAt: new Date(Date.now() - 1000),
+    });
+    const res = await request(buildRefreshApp())
+      .post("/auth/refresh")
+      .send({ refresh: "expired-token" });
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("refresh_invalid");
+  });
+
+  it("triggers reuse detection: unknown refresh + Bearer access identifies user and revokes their sessions", async () => {
+    mockPrisma.session.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.session.deleteMany.mockResolvedValueOnce({ count: 2 });
+
+    const access = signAccessToken("u-reuse", "USER");
+
+    const res = await request(buildRefreshApp())
+      .post("/auth/refresh")
+      .set("Authorization", `Bearer ${access}`)
+      .send({ refresh: "rotated-or-stolen-token" });
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("refresh_invalid");
+    expect(mockPrisma.session.deleteMany).toHaveBeenCalledWith({ where: { userId: "u-reuse" } });
   });
 });

@@ -8,6 +8,9 @@ import { handleOAuthLogin, buildMePayload } from "../services/authService.js";
 import {
   signAccessToken,
   issueRefreshToken,
+  rotateRefreshToken,
+  revokeAllSessionsForUser,
+  verifyAccessToken,
   verifyOAuthState,
 } from "../services/authTokenService.js";
 
@@ -117,4 +120,51 @@ export const handleGetMe = async (req, res) => {
 
   const me = await buildMePayload(req.user.id);
   return res.json({ user: me });
+};
+
+/**
+ * Handler untuk POST /auth/refresh
+ * Rotates the refresh token and returns a new {access, refresh} pair.
+ * On unknown refresh + valid Bearer access, triggers reuse detection by
+ * revoking all sessions for the identified user.
+ */
+export const handleRefresh = async (req, res) => {
+  const incoming = typeof req.body?.refresh === "string" ? req.body.refresh : null;
+  if (!incoming) {
+    return res.status(400).json({ error: "refresh required" });
+  }
+
+  const rotated = await rotateRefreshToken(incoming, {
+    ipAddress: req.ip || null,
+    userAgent: req.get("user-agent") || null,
+  });
+
+  if (!rotated) {
+    // Reuse detection: if the caller also sent a Bearer access token, try to
+    // identify the user via verify (rejects expired/invalid). On success,
+    // revoke all of that user's sessions. On failure, we can't safely
+    // identify the user — skip revoke rather than risk wrong-user logout.
+    const header = req.get("authorization") || "";
+    const m = /^Bearer\s+(.+)$/i.exec(header);
+    if (m) {
+      try {
+        const decoded = verifyAccessToken(m[1]);
+        if (decoded?.sub) await revokeAllSessionsForUser(decoded.sub);
+      } catch {
+        // ignore — can't identify the user, so we can't revoke
+      }
+    }
+    return res.status(401).json({ error: "refresh_invalid" });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: rotated.userId } });
+  if (!user) return res.status(401).json({ error: "refresh_invalid" });
+
+  const access = signAccessToken(user.id, user.role);
+  const ttlSeconds = (Number(process.env.ACCESS_TOKEN_TTL_DAYS) || 7) * 24 * 60 * 60;
+  return res.status(200).json({
+    access,
+    refresh: rotated.token,
+    expiresIn: ttlSeconds,
+  });
 };
