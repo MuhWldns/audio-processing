@@ -5,9 +5,14 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
+import express from "express";
+import jwt from "jsonwebtoken";
 import { createTestApp, mockUser } from "../helpers/testApp.js";
 import { prisma } from "../../src/prisma.js";
 import { handleGetMe, handleLogout } from "../../src/controllers/authController.js";
+import { handleGetCart } from "../../src/controllers/cartController.js";
+import { requireAuth } from "../../src/middlewares/auth.js";
+import { signAccessToken } from "../../src/services/authTokenService.js";
 
 function resetPrismaMocks() {
   Object.values(prisma).forEach((model) => {
@@ -95,5 +100,94 @@ describe("Auth Routes", () => {
         }),
       });
     });
+  });
+});
+
+// Build an app that exercises the REAL requireAuth from src/middlewares/auth.js
+// (the createTestApp helper installs its own mock requireAuth, which we don't
+// want here since we're testing the production middleware). We mount /cart
+// because handleGetCart only reads req.user.id and needs one Prisma mock for
+// the happy path — the simplest route that proves Bearer reaches the controller.
+function buildBearerApp() {
+  const app = express();
+  app.use(express.json());
+  // No passport / session — Bearer path should not require either.
+  app.get("/cart", requireAuth, handleGetCart);
+  app.use((err, req, res, next) => {
+    res.status(err.status || 500).json({ error: err.message });
+  });
+  return app;
+}
+
+describe("requireAuth — Bearer token path", () => {
+  beforeEach(() => {
+    resetPrismaMocks();
+    process.env.JWT_SECRET = "test-secret";
+    process.env.ACCESS_TOKEN_TTL_DAYS = "7";
+  });
+
+  it("accepts a valid Bearer JWT and populates req.user", async () => {
+    const token = signAccessToken("user-bearer-1", "USER");
+    prisma.user.findUnique.mockResolvedValueOnce({
+      id: "user-bearer-1",
+      role: "USER",
+      email: "b@example.com",
+    });
+    // No cart for this user → handleGetCart returns 200 with empty items.
+    prisma.cart.findUnique.mockResolvedValueOnce(null);
+
+    const app = buildBearerApp();
+    const res = await request(app)
+      .get("/cart")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "user-bearer-1" },
+    });
+  });
+
+  it("returns 401 invalid_token for a malformed Bearer", async () => {
+    const app = buildBearerApp();
+    const res = await request(app)
+      .get("/cart")
+      .set("Authorization", "Bearer not-a-real-jwt");
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("invalid_token");
+  });
+
+  it("returns 401 token_expired for an expired Bearer", async () => {
+    const expired = jwt.sign(
+      { sub: "u", role: "USER" },
+      process.env.JWT_SECRET,
+      { algorithm: "HS256", expiresIn: "-1s" },
+    );
+    const app = buildBearerApp();
+    const res = await request(app)
+      .get("/cart")
+      .set("Authorization", `Bearer ${expired}`);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("token_expired");
+  });
+
+  it("returns 401 invalid_token when Bearer subject does not exist", async () => {
+    const token = signAccessToken("ghost-user", "USER");
+    prisma.user.findUnique.mockResolvedValueOnce(null);
+    const app = buildBearerApp();
+    const res = await request(app)
+      .get("/cart")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("invalid_token");
+  });
+
+  it("falls back to cookie session path when no Bearer header is present", async () => {
+    // No Authorization header → falls through to req.isAuthenticated() check,
+    // which is false in this minimal app, so returns 401 "Not authenticated".
+    const app = buildBearerApp();
+    const res = await request(app).get("/cart");
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("Not authenticated");
   });
 });
