@@ -17,7 +17,8 @@ import request from "supertest";
 import express from "express";
 import { mockPrisma } from "../helpers/mockPrisma.js";
 import { signOAuthState, verifyAccessToken, signAccessToken } from "../../src/services/authTokenService.js";
-import { handleGoogleCallback, handleRefresh } from "../../src/controllers/authController.js";
+import { handleGoogleCallback, handleRefresh, handleMobileLogout } from "../../src/controllers/authController.js";
+import { requireAuth } from "../../src/middlewares/auth.js";
 
 function buildCallbackApp(overrideUser) {
   const app = express();
@@ -182,5 +183,66 @@ describe("POST /auth/refresh", () => {
     expect(res.status).toBe(401);
     expect(res.body.error).toBe("refresh_invalid");
     expect(mockPrisma.session.deleteMany).toHaveBeenCalledWith({ where: { userId: "u-reuse" } });
+  });
+});
+
+function buildLogoutApp() {
+  const app = express();
+  app.use(express.json());
+  app.post("/auth/logout-mobile", requireAuth, async (req, res, next) => {
+    try { await handleMobileLogout(req, res); } catch (err) { next(err); }
+  });
+  app.use((err, req, res, next) => res.status(500).json({ error: err.message }));
+  return app;
+}
+
+describe("POST /auth/logout-mobile", () => {
+  beforeEach(() => {
+    mockPrisma.session.deleteMany.mockReset();
+    mockPrisma.user.findUnique.mockReset();
+  });
+
+  it("revokes the refresh token row and returns 200 (with valid Bearer)", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce({ id: "u-logout-1", role: "USER" });
+    mockPrisma.session.deleteMany.mockResolvedValueOnce({ count: 1 });
+    const access = signAccessToken("u-logout-1", "USER");
+    const res = await request(buildLogoutApp())
+      .post("/auth/logout-mobile")
+      .set("Authorization", `Bearer ${access}`)
+      .send({ refresh: "the-refresh-token" });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(mockPrisma.session.deleteMany).toHaveBeenCalled();
+    const where = mockPrisma.session.deleteMany.mock.calls[0][0].where;
+    expect(where.sessionToken).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("is idempotent — returns 200 even when no row matches", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce({ id: "u-logout-2", role: "USER" });
+    mockPrisma.session.deleteMany.mockResolvedValueOnce({ count: 0 });
+    const access = signAccessToken("u-logout-2", "USER");
+    const res = await request(buildLogoutApp())
+      .post("/auth/logout-mobile")
+      .set("Authorization", `Bearer ${access}`)
+      .send({ refresh: "stale-token" });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it("returns 401 without a Bearer token", async () => {
+    const res = await request(buildLogoutApp())
+      .post("/auth/logout-mobile")
+      .send({ refresh: "any" });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 400 when refresh body field is missing", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce({ id: "u-logout-3", role: "USER" });
+    const access = signAccessToken("u-logout-3", "USER");
+    const res = await request(buildLogoutApp())
+      .post("/auth/logout-mobile")
+      .set("Authorization", `Bearer ${access}`)
+      .send({});
+    expect(res.status).toBe(400);
   });
 });

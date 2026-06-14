@@ -38,6 +38,7 @@ import {
   handleLogout,
   handleGetMe,
   handleRefresh,
+  handleMobileLogout,
   handleUpload,
   handleGetHistory,
   handleDownloadHistory,
@@ -186,6 +187,15 @@ const refreshLimiter = createUploadLimiter({
   message: { error: "Too many refresh attempts, please slow down." },
 });
 
+// Rate limiter for /auth/logout-mobile. Keyed per-user (requireAuth runs first
+// and populates req.user), falling back to req.ip for the unauth case.
+const logoutMobileLimiter = createUploadLimiter({
+  windowMinutes: 1,
+  maxRequests: 10,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: { error: "Too many logout attempts." },
+});
+
 // Memory-based multer for admin file uploads (goes to B2, not local disk)
 const adminFileUpload = multer({
   storage: multer.memoryStorage(),
@@ -240,6 +250,7 @@ app.get("/auth/discord/callback", ensureAuthReady("discord"), passport.authentic
 app.post("/auth/logout", requireAuth, handleLogout);
 app.get("/auth/me", handleGetMe);
 app.post("/auth/refresh", refreshLimiter, asyncHandler(handleRefresh));
+app.post("/auth/logout-mobile", requireAuth, logoutMobileLimiter, asyncHandler(handleMobileLogout));
 
 // Upload routes
 app.post("/upload", requireAuth, uploadLimiter, validateApiKey(apiKey), upload.single("file"), validateAudioFile(), handleUpload);

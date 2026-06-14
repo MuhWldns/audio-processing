@@ -9,6 +9,7 @@ import {
   signAccessToken,
   issueRefreshToken,
   rotateRefreshToken,
+  revokeRefreshToken,
   revokeAllSessionsForUser,
   verifyAccessToken,
   verifyOAuthState,
@@ -167,4 +168,19 @@ export const handleRefresh = async (req, res) => {
     refresh: rotated.token,
     expiresIn: getAccessTtlSeconds(),
   });
+};
+
+/**
+ * Handler untuk POST /auth/logout-mobile
+ * Idempotent revocation of a refresh token. Bearer auth required (so we know
+ * who is logging out and prevent anonymous enumeration). Always returns 200
+ * to avoid leaking whether a given refresh token exists.
+ */
+export const handleMobileLogout = async (req, res) => {
+  const incoming = typeof req.body?.refresh === "string" ? req.body.refresh : null;
+  if (!incoming) {
+    return res.status(400).json({ error: "refresh required" });
+  }
+  await revokeRefreshToken(incoming);
+  return res.status(200).json({ ok: true });
 };
