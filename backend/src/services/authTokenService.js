@@ -92,3 +92,31 @@ export async function revokeRefreshToken(rawToken) {
 export async function revokeAllSessionsForUser(userId) {
   return await prisma.session.deleteMany({ where: { userId } });
 }
+
+const STATE_VERSION = "v1";
+
+export function signOAuthState(payload) {
+  const nonce = crypto.randomBytes(8).toString("base64url");
+  const body = `${STATE_VERSION}.${nonce}.${Buffer.from(JSON.stringify(payload)).toString("base64url")}`;
+  const sig = crypto.createHmac("sha256", getJwtSecret()).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+export function verifyOAuthState(state) {
+  if (!state || typeof state !== "string") return null;
+  const parts = state.split(".");
+  if (parts.length !== 4) return null;
+  const [version, nonce, encoded, sig] = parts;
+  if (version !== STATE_VERSION) return null;
+  const body = `${version}.${nonce}.${encoded}`;
+  const expected = crypto.createHmac("sha256", getJwtSecret()).update(body).digest("base64url");
+  const sigBuf = Buffer.from(sig);
+  const expBuf = Buffer.from(expected);
+  if (sigBuf.length !== expBuf.length) return null;
+  if (!crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+  try {
+    return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+}

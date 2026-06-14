@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import jwt from "jsonwebtoken";
 import { mockPrisma, resetAllMocks } from "../helpers/mockPrisma.js";
-import { signAccessToken, verifyAccessToken, issueRefreshToken, validateRefreshToken, rotateRefreshToken, revokeRefreshToken, revokeAllSessionsForUser } from "../../src/services/authTokenService.js";
+import { signAccessToken, verifyAccessToken, issueRefreshToken, validateRefreshToken, rotateRefreshToken, revokeRefreshToken, revokeAllSessionsForUser, signOAuthState, verifyOAuthState } from "../../src/services/authTokenService.js";
 
 describe("authTokenService — access JWT", () => {
   beforeEach(() => {
@@ -136,5 +136,35 @@ describe("authTokenService — refresh tokens", () => {
     const result = await revokeAllSessionsForUser("u1");
     expect(mockPrisma.session.deleteMany).toHaveBeenCalledWith({ where: { userId: "u1" } });
     expect(result.count).toBe(3);
+  });
+});
+
+describe("authTokenService — OAuth state", () => {
+  beforeEach(() => {
+    process.env.JWT_SECRET = "test-secret";
+  });
+
+  it("signs and verifies state, recovering the platform flag", () => {
+    const state = signOAuthState({ platform: "mobile" });
+    const result = verifyOAuthState(state);
+    expect(result).toEqual({ platform: "mobile" });
+  });
+
+  it("verifyOAuthState returns null for a tampered state", () => {
+    const state = signOAuthState({ platform: "mobile" });
+    const tampered = state.slice(0, -4) + "AAAA";
+    expect(verifyOAuthState(tampered)).toBeNull();
+  });
+
+  it("verifyOAuthState returns null for a malformed state", () => {
+    expect(verifyOAuthState("not-a-real-state")).toBeNull();
+    expect(verifyOAuthState("")).toBeNull();
+    expect(verifyOAuthState(null)).toBeNull();
+  });
+
+  it("includes a nonce so two states for the same payload differ", () => {
+    const a = signOAuthState({ platform: "mobile" });
+    const b = signOAuthState({ platform: "mobile" });
+    expect(a).not.toBe(b);
   });
 });
