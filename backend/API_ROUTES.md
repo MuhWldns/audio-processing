@@ -10,7 +10,14 @@ http://localhost:3001
 
 ## Authentication
 
-Session-based via `connect.sid` cookie. Established through OAuth login flow (Google/Discord).
+Two parallel auth paths converge at the same `requireAuth` middleware:
+
+- **Web (cookie):** `connect.sid` cookie, established through OAuth login (Google/Discord) and stored in express-session MemoryStore.
+- **Mobile (Bearer JWT):** `Authorization: Bearer <jwt>` header, issued after OAuth callback when the request was initiated with `?platform=mobile`. Refresh tokens are stored hashed in the existing `Session` table.
+
+`requireAuth` checks the `Authorization: Bearer` header first; if present and valid the JWT wins. Otherwise it falls back to the cookie. `requireAdmin` reads `req.user.role` either way.
+
+See `docs/superpowers/specs/2026-06-14-mobile-oauth-token-auth-design.md` for the full design.
 
 ---
 
@@ -18,12 +25,14 @@ Session-based via `connect.sid` cookie. Established through OAuth login flow (Go
 
 | Method | Path | Access | Description |
 |--------|------|--------|-------------|
-| GET | `/auth/google` | Public | Initiate Google OAuth |
-| GET | `/auth/google/callback` | Public | Google OAuth callback |
-| GET | `/auth/discord` | Public | Initiate Discord OAuth |
-| GET | `/auth/discord/callback` | Public | Discord OAuth callback |
-| POST | `/auth/logout` | Protected | Logout session |
-| GET | `/auth/me` | Public | Get current user (returns `{ user: null }` if unauthenticated) |
+| GET | `/auth/google` | Public | Initiate Google OAuth (add `?platform=mobile` for Flutter flow) |
+| GET | `/auth/google/callback` | Public | Google OAuth callback (branches to deep link when `state.platform === "mobile"`) |
+| GET | `/auth/discord` | Public | Initiate Discord OAuth (add `?platform=mobile` for Flutter flow) |
+| GET | `/auth/discord/callback` | Public | Discord OAuth callback (branches to deep link when `state.platform === "mobile"`) |
+| POST | `/auth/logout` | Protected | Logout web session (cookie) |
+| POST | `/auth/refresh` | Public + Rate Limited (30/min) | Exchange a mobile refresh token for a fresh `{access, refresh}` pair (rotation + reuse detection) |
+| POST | `/auth/logout-mobile` | Bearer + Rate Limited (10/min/user) | Revoke a mobile refresh token (idempotent) |
+| GET | `/auth/me` | Public | Get current user (returns `{ user: null }` if unauthenticated). Accepts cookie or Bearer. |
 | POST | `/auth/dev-login` | Dev only | Create session without OAuth (non-production) |
 
 ### GET /auth/me — Response
@@ -59,6 +68,54 @@ Session-based via `connect.sid` cookie. Established through OAuth login flow (Go
 ```json
 { "email": "test@example.com", "displayName": "Test User" }
 ```
+
+### GET /auth/google?platform=mobile and /auth/discord?platform=mobile
+
+When `platform=mobile` is present, the entry handler signs a `state` HMAC carrying `{platform: "mobile", nonce}` with `JWT_SECRET` and passes it through Passport. The callback verifies the HMAC and branches:
+
+- **Mobile branch (`state.platform === "mobile"`):** issues an access JWT (HS256, TTL `ACCESS_TOKEN_TTL_DAYS`, default 7d) plus an opaque refresh token (32 random bytes, stored as SHA-256 hash in `Session`, TTL `REFRESH_TOKEN_TTL_DAYS`, default 30d), then redirects to `${MOBILE_DEEP_LINK_REDIRECT}?access=<jwt>&refresh=<token>`.
+- **OAuth failure:** redirects to `${MOBILE_DEEP_LINK_REDIRECT}?error=oauth_failed`.
+- **Forged state (HMAC mismatch):** redirects to `${FRONTEND_URL}/?login=failed` (refuses to redirect to a deep link).
+- **Web branch (no `platform`):** existing behavior unchanged — redirects to `${FRONTEND_URL}/?login=success`.
+
+### POST /auth/refresh
+
+**Body:**
+```json
+{ "refresh": "<token>" }
+```
+
+**Response 200:**
+```json
+{
+  "access": "<new JWT>",
+  "refresh": "<new opaque token>",
+  "expiresIn": 604800
+}
+```
+
+**Errors:**
+- `400 { "error": "refresh required" }` — body missing the field
+- `401 { "error": "refresh_invalid" }` — token not found, expired, or already rotated
+- `429` — rate limit hit (30/min)
+
+**Behavior:** validates the incoming refresh (lookup by SHA-256 hash, check `expiresAt > NOW()`), then atomically deletes the old `Session` row and inserts a new one with a freshly generated refresh token. Issues a new access JWT bound to the same user. Reuse of an already-rotated token deletes **all** of that user's `Session` rows (RFC 6819 §5.2.2.3 reuse detection) and returns `refresh_invalid`.
+
+### POST /auth/logout-mobile
+
+**Headers:** `Authorization: Bearer <access JWT>` required (so we can identify the caller even if their refresh has already been wiped).
+
+**Body:**
+```json
+{ "refresh": "<token>" }
+```
+
+**Response 200:**
+```json
+{ "ok": true }
+```
+
+Idempotent — succeeds whether or not the matching `Session` row exists. Rate limit: 10/min per user. The access JWT remains technically valid until its `exp`, but the app is expected to wipe local storage.
 
 ---
 
@@ -412,7 +469,10 @@ All admin routes require `requireAuth` + `requireAdmin` (user.role === "ADMIN").
 
 - **CORS:** Explicit origin from `CORS_ORIGIN` env (no wildcard with credentials)
 - **Session:** `SESSION_SECRET` required in production (server exits if missing)
-- **Rate limiting:** Upload endpoint + verify-license (30 req/min)
+- **JWT:** `JWT_SECRET` required in production (server exits if missing). HS256 algorithm pinned at verify (`alg: none` rejected). Access JWT payload is `{ sub, role, iat, exp }` — no PII, no provider tokens.
+- **Refresh tokens:** Stored as SHA-256 hashes in `Session.sessionToken`; rotation on every `/auth/refresh`; reuse of a rotated token revokes all of that user's sessions.
+- **OAuth state:** HMAC-signed with `JWT_SECRET` to prevent callback hijack into a malicious deep link.
+- **Rate limiting:** Upload endpoint, verify-license (30/min), `/auth/refresh` (30/min), `/auth/logout-mobile` (10/min/user)
 - **Webhook:** HMAC SHA256 signature verification + atomic idempotent processing
 - **Admin files:** Path traversal blocked (no `..`, must be relative)
 - **Validation:** Zod schemas on all state-changing endpoints

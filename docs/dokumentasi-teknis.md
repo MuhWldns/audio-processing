@@ -9,7 +9,7 @@ RBX Royale adalah platform komersial berbasis web yang menyediakan dua layanan u
 1. **Script Store** - Marketplace untuk pembelian script Roblox berlisensi dengan sistem verifikasi real-time
 2. **Audio Processing** - Tools pemrosesan audio berbasis browser untuk kebutuhan game development
 
-Platform ini menggunakan arsitektur client-server dengan frontend Next.js dan backend Express.js, terintegrasi dengan payment gateway QRIS (Bayar.gg webhook & MustikaPay polling, dipilih via TOPUP_PROVIDER), object storage (Backblaze B2), dan email transaksional (Resend).
+Platform ini menggunakan arsitektur client-server dengan frontend Next.js dan backend Express.js, terintegrasi dengan payment gateway QRIS (Bayar.gg webhook & MustikaPay polling, dipilih via TOPUP_PROVIDER), object storage (Backblaze B2), dan email transaksional (Resend). Selain klien web, backend juga melayani klien mobile (Flutter) yang berautentikasi via Bearer JWT — kedua jalur (cookie untuk web, Bearer untuk mobile) berjalan paralel di endpoint yang sama.
 
 ### 1.2 Tujuan Sistem
 
@@ -90,13 +90,14 @@ Sistem terdiri dari 3 layer utama:
 
 **Application Layer (Backend)**
 - Express.js server yang menangani business logic
-- Session-based authentication via Passport.js
+- Dual authentication: cookie session (web, via Passport.js + express-session) DAN Bearer JWT (mobile/Flutter). Kedua jalur diterima oleh middleware `requireAuth` yang sama
 - Semua operasi wallet dan transaksi bersifat atomic (database transaction)
 
 **Data Layer**
 - MySQL database sebagai single source of truth
 - Backblaze B2 untuk file storage (script files)
-- In-memory session store (express-session default)
+- In-memory session store (express-session default) untuk cookie web
+- Tabel `Session` di MySQL dipakai untuk menyimpan refresh token mobile (hashed SHA-256)
 
 ### 3.2 Komunikasi Antar Komponen
 
@@ -247,20 +248,22 @@ Relasi: userId → User.id (CASCADE)
 
 #### Session
 
-Menyimpan data session untuk tracking login (model Prisma, bukan session store express-session).
+Menyimpan data session untuk autentikasi mobile (refresh token). Sebelum fitur mobile auth (Juni 2026), tabel ini ada di skema tapi tidak terpakai karena web memakai express-session MemoryStore. Setelah Juni 2026, tabel ini menjadi penyimpanan refresh token Bearer JWT untuk klien Flutter — `sessionToken` berisi hash SHA-256 dari refresh token (raw token tidak pernah disimpan), dan rotasi refresh token akan menghapus row lama lalu insert row baru.
 
 | Kolom | Tipe | Nullable | Default | Keterangan |
 |---|---|---|---|---|
 | id | VARCHAR(191) | Tidak | cuid() | Primary key |
 | userId | VARCHAR(191) | Tidak | - | FK ke User |
-| sessionToken | VARCHAR(191) | Tidak | - | Token session (unik) |
-| expiresAt | DATETIME | Tidak | - | Waktu expired |
-| ipAddress | VARCHAR(64) | Ya | - | IP address |
-| userAgent | VARCHAR(512) | Ya | - | Browser user agent |
+| sessionToken | VARCHAR(191) | Tidak | - | SHA-256 hash dari refresh token (unik) |
+| expiresAt | DATETIME | Tidak | - | Waktu expired (default 30 hari, ikut REFRESH_TOKEN_TTL_DAYS) |
+| ipAddress | VARCHAR(64) | Ya | - | IP saat issue (forensic, tidak divalidasi saat use) |
+| userAgent | VARCHAR(512) | Ya | - | User agent saat issue (forensic) |
 | createdAt | DATETIME | Tidak | now() | Waktu dibuat |
 | updatedAt | DATETIME | Tidak | auto | Waktu update |
 
 Relasi: userId → User.id (CASCADE)
+
+Catatan: cookie session web (`connect.sid`) tetap memakai express-session MemoryStore, tidak menyentuh tabel ini.
 
 ---
 
@@ -635,12 +638,16 @@ Relasi: cartId → Cart.id (CASCADE), productId → Product.id (CASCADE)
 
 | Method | Path | Auth | Deskripsi |
 |---|---|---|---|
-| GET | /auth/google | Publik | Mulai login via Google OAuth |
-| GET | /auth/google/callback | Publik | Callback dari Google |
-| GET | /auth/discord | Publik | Mulai login via Discord OAuth |
-| GET | /auth/discord/callback | Publik | Callback dari Discord |
-| POST | /auth/logout | Login | Logout dan hapus session |
-| GET | /auth/me | Publik | Ambil data user yang sedang login |
+| GET | /auth/google | Publik | Mulai login via Google OAuth (tambah `?platform=mobile` untuk alur Flutter) |
+| GET | /auth/google/callback | Publik | Callback dari Google (cabang ke deep link bila `state.platform === "mobile"`) |
+| GET | /auth/discord | Publik | Mulai login via Discord OAuth (tambah `?platform=mobile` untuk alur Flutter) |
+| GET | /auth/discord/callback | Publik | Callback dari Discord (cabang ke deep link bila `state.platform === "mobile"`) |
+| POST | /auth/logout | Login | Logout dan hapus session (cookie web) |
+| POST | /auth/refresh | Publik (rate limit) | Tukar refresh token mobile dengan pasangan access JWT + refresh baru (rotation + reuse detection) |
+| POST | /auth/logout-mobile | Bearer | Hapus refresh token mobile (idempotent) |
+| GET | /auth/me | Publik | Ambil data user yang sedang login (cookie atau Bearer) |
+
+Detail desain Bearer JWT, rotasi refresh token, dan deep link `rbxroyale://auth?access=…&refresh=…` ada di `docs/superpowers/specs/2026-06-14-mobile-oauth-token-auth-design.md`.
 
 ### 5.2 Audio Processing
 
@@ -722,8 +729,11 @@ Relasi: cartId → Cart.id (CASCADE), productId → Product.id (CASCADE)
 
 ### 6.1 Alur Autentikasi (OAuth)
 
-Sistem menggunakan autentikasi berbasis session dengan OAuth 2.0. User tidak perlu membuat password — cukup login via Google atau Discord.
+Sistem menggunakan dua jalur autentikasi yang berjalan paralel di endpoint OAuth yang sama:
+- **Web (cookie session)** — default, untuk frontend Next.js. Cookie `connect.sid` di-set di domain `.muhwldns.me`.
+- **Mobile (Bearer JWT)** — untuk klien Flutter. Aktif bila request masuk membawa `?platform=mobile` pada `/auth/google` atau `/auth/discord`. Backend menyimpan flag ini di `state` OAuth (HMAC-signed dengan `JWT_SECRET`) sehingga callback bisa mengenali jenis klien tanpa mengubah redirect URI.
 
+Alur web (default):
 1. User mengakses halaman login di frontend dan memilih provider (Google atau Discord)
 2. Browser diarahkan ke endpoint backend /auth/google atau /auth/discord
 3. Backend redirect ke halaman consent provider (Google/Discord)
@@ -737,6 +747,21 @@ Sistem menggunakan autentikasi berbasis session dengan OAuth 2.0. User tidak per
 11. AuthContext di frontend menyimpan data user dan menampilkan UI yang sesuai
 
 Cookie session dikonfigurasi dengan: httpOnly (tidak bisa diakses JavaScript), secure (hanya HTTPS), sameSite=none (untuk cross-subdomain), dan domain=.muhwldns.me (shared antar subdomain).
+
+Alur mobile (Flutter, sejak Juni 2026):
+1. App membuka system browser (Chrome/Safari) ke `/auth/google?platform=mobile` atau `/auth/discord?platform=mobile`
+2. Backend menandatangani `state = HMAC{platform:"mobile", nonce}` dengan `JWT_SECRET` lalu meneruskan ke passport
+3. User consent di halaman provider, provider redirect ke callback yang sama
+4. Callback memverifikasi HMAC `state`, mengenali `platform === "mobile"`, kemudian:
+   - Issue access JWT (HS256, payload `{ sub, role, iat, exp }`, TTL `ACCESS_TOKEN_TTL_DAYS` = 7 hari default)
+   - Issue refresh token (32 random bytes, base64url) dan simpan SHA-256 hash-nya di tabel `Session` (TTL `REFRESH_TOKEN_TTL_DAYS` = 30 hari default)
+   - Redirect ke `${MOBILE_DEEP_LINK_REDIRECT}?access=<jwt>&refresh=<token>` (custom scheme `rbxroyale://auth`)
+5. OS Flutter menangkap deep link, app menyimpan kedua token ke `flutter_secure_storage`
+6. Setiap request berikutnya membawa `Authorization: Bearer <access JWT>`. Middleware `requireAuth` mengecek Bearer dulu (precedence) sebelum fallback ke cookie
+
+Refresh & rotation: app memanggil `POST /auth/refresh` saat access JWT expired. Backend memvalidasi refresh, menghapus row `Session` lama, lalu insert row baru dengan refresh token baru (rotation). Bila refresh yang sudah dirotasi dipakai lagi → reuse detection: seluruh `Session` user dihapus dan klien dipaksa login ulang (RFC 6819 §5.2.2.3).
+
+Logout mobile: `POST /auth/logout-mobile` (memerlukan Bearer) menghapus row `Session` yang cocok dengan hash refresh token. Idempotent.
 
 ### 6.2 Alur Top-Up (QRIS)
 
@@ -868,11 +893,14 @@ Audio processing dilakukan sepenuhnya di browser (client-side) menggunakan Web A
 
 ### 8.1 Autentikasi & Otorisasi
 
-- Session-based authentication via cookie (httpOnly, secure, sameSite=none)
+- Web: session-based authentication via cookie (httpOnly, secure, sameSite=none) dengan Passport.js + express-session
+- Mobile: Bearer JWT (HS256, signed dengan `JWT_SECRET`, alg dipin pada verify untuk menolak `alg: none`)
+- Refresh token mobile: opaque 32 bytes, disimpan di tabel `Session` sebagai SHA-256 hash, di-rotate setiap refresh, reuse detection menghapus seluruh session user
+- OAuth state HMAC-signed (mencegah callback hijack ke deep link milik attacker)
 - OAuth 2.0 (Google, Discord) — tidak ada password yang disimpan
 - Role-based access control: USER dan ADMIN
-- Middleware requireAuth untuk endpoint protected
-- Middleware requireAdmin untuk endpoint admin
+- Middleware `requireAuth` (cek Bearer dulu, fallback cookie) untuk endpoint protected
+- Middleware requireAdmin untuk endpoint admin (membaca `req.user.role` yang berasal dari payload JWT atau session cookie)
 
 ### 8.2 Input Validation
 
@@ -888,6 +916,8 @@ Audio processing dilakukan sepenuhnya di browser (client-side) menggunakan Web A
 | POST /topup/create | 5 req / menit |
 | POST /checkout | 5 req / menit |
 | POST /api/verify-license | 30 req / menit |
+| POST /auth/refresh | 30 req / menit (per Bearer/IP) |
+| POST /auth/logout-mobile | 10 req / menit (per user) |
 
 ### 8.4 Payment Security
 
@@ -945,6 +975,10 @@ Audio processing dilakukan sepenuhnya di browser (client-side) menggunakan Web A
 | S3_REGION | Region B2 |
 | RESEND_API_KEY | Resend API key untuk email |
 | EMAIL_FROM | Alamat pengirim email |
+| JWT_SECRET | Secret HS256 untuk access JWT mobile + HMAC OAuth state (wajib di production, fail-closed) |
+| MOBILE_DEEP_LINK_REDIRECT | Deep link tujuan callback mobile, mis. `rbxroyale://auth` |
+| ACCESS_TOKEN_TTL_DAYS | TTL access JWT mobile (default 7) |
+| REFRESH_TOKEN_TTL_DAYS | TTL refresh token mobile, ikut `Session.expiresAt` (default 30) |
 
 **Frontend (.env.local):**
 
@@ -1299,3 +1333,80 @@ Tujuan: mengurangi jumlah request ke Roblox API dan menghindari rate limit.
 ---
 
 *Terakhir diperbarui: 18 Mei 2026*
+
+---
+
+## 16. Mobile Auth (Update Juni 2026)
+
+### 16.1 Overview
+
+Sejak Juni 2026 backend melayani klien mobile (Flutter) di samping klien web. Kedua jalur mengakses endpoint protected yang sama melalui satu middleware `requireAuth`:
+
+- **Web** — cookie `connect.sid` (express-session, MemoryStore)
+- **Mobile** — `Authorization: Bearer <jwt>` (HS256 access JWT) + opaque refresh token
+
+`requireAuth` mengecek header `Authorization: Bearer` lebih dulu, fallback ke cookie bila tidak ada. Bearer menang bila keduanya hadir. Tidak ada perubahan controller — `req.user.id` dan `req.user.role` diisi dari JWT payload bila Bearer dipakai.
+
+### 16.2 Token Model
+
+| Token | Algoritma / Bentuk | TTL (default) | Penyimpanan server | Penyimpanan klien |
+|---|---|---|---|---|
+| Access JWT | HS256, payload `{ sub, role, iat, exp }` | `ACCESS_TOKEN_TTL_DAYS` (7 hari) | Tidak disimpan (stateless) | `flutter_secure_storage` |
+| Refresh token | 32 random bytes (base64url) | `REFRESH_TOKEN_TTL_DAYS` (30 hari) | `Session.sessionToken` (SHA-256 hash) | `flutter_secure_storage` |
+
+Access JWT tidak bisa di-revoke sebelum expiry — trade-off ditutup oleh TTL pendek dan revoke refresh token.
+
+### 16.3 Endpoint Mobile-Specific
+
+| Method | Path | Auth | Rate Limit | Deskripsi |
+|---|---|---|---|---|
+| GET | /auth/google?platform=mobile | Publik | - | Mulai OAuth dengan signed state untuk cabang mobile |
+| GET | /auth/discord?platform=mobile | Publik | - | Mulai OAuth dengan signed state untuk cabang mobile |
+| POST | /auth/refresh | Publik (rate limit) | 30/min | Tukar refresh token dengan pasangan access+refresh baru. Old session row dihapus, row baru di-insert (rotation). Reuse → revoke seluruh session user |
+| POST | /auth/logout-mobile | Bearer | 10/min/user | Hapus row `Session` yang cocok dengan hash refresh token. Idempotent |
+
+Endpoint lain (`/auth/me`, `/topup/*`, `/checkout`, `/licenses/*`, `/admin/*`, dll.) otomatis bisa diakses via Bearer karena `requireAuth` sudah mendukung dua jalur.
+
+### 16.4 Deep Link
+
+Backend memperlakukan deep link sebagai redirect URL opaque dari env `MOBILE_DEEP_LINK_REDIRECT` (default `rbxroyale://auth`). Format redirect dari callback:
+
+| Outcome | Redirect URL |
+|---|---|
+| Sukses | `${MOBILE_DEEP_LINK_REDIRECT}?access=<jwt>&refresh=<token>` |
+| OAuth gagal (cancel/denied) | `${MOBILE_DEEP_LINK_REDIRECT}?error=oauth_failed` |
+| State HMAC tidak valid | `FRONTEND_URL/?login=failed` (treat sebagai forged, tidak redirect ke deep link) |
+
+Custom scheme bisa di-hijack app lain di device yang sama — risiko diakui dan diterima untuk v1. Migrasi ke App Links / Universal Links bersifat additive (cukup ganti `MOBILE_DEEP_LINK_REDIRECT` ke URL HTTPS yang diverifikasi via `assetlinks.json` / `apple-app-site-association`).
+
+### 16.5 Reuse Detection
+
+Setiap `/auth/refresh` sukses akan menghapus row `Session` lama dan insert row baru (rotation). Bila klien menyajikan refresh yang sudah dirotasi, server menghapus seluruh `Session` milik user tersebut sebagai sinyal token dicuri (RFC 6819 §5.2.2.3). Klien dipaksa login ulang.
+
+### 16.6 Reusing the Session Table (No Migration)
+
+Fitur ini tidak menambah kolom atau tabel. Tabel `Session` di `prisma/schema.prisma` sudah ada sejak skema awal RBX Royale tapi belum dipakai (web memakai express-session MemoryStore). Refresh token mobile mengisi tabel ini sekarang dengan konvensi: `sessionToken` = SHA-256 hash dari raw refresh, `expiresAt` = sekarang + `REFRESH_TOKEN_TTL_DAYS`, `ipAddress`/`userAgent` = forensic snapshot saat issue (tidak divalidasi saat use).
+
+### 16.7 Konfigurasi
+
+Env vars baru (lihat juga 9.1):
+
+| Variable | Wajib di production | Default dev | Keterangan |
+|---|---|---|---|
+| JWT_SECRET | Ya (fail-closed, `process.exit(1)`) | warned default | HS256 signing + HMAC OAuth state |
+| MOBILE_DEEP_LINK_REDIRECT | Ya | `rbxroyale://auth` | Redirect tujuan setelah callback mobile sukses |
+| ACCESS_TOKEN_TTL_DAYS | Tidak | 7 | TTL access JWT |
+| REFRESH_TOKEN_TTL_DAYS | Tidak | 30 | TTL refresh token (`Session.expiresAt`) |
+
+### 16.8 Referensi Spec & Plan
+
+- Spec: `docs/superpowers/specs/2026-06-14-mobile-oauth-token-auth-design.md`
+- Plan: `docs/superpowers/plans/2026-06-14-mobile-oauth-token-auth.md`
+- Modul utama: `backend/src/services/authTokenService.js` (sign/verify JWT, issue/rotate/revoke refresh token, signOAuthState/verifyOAuthState)
+- Middleware: `backend/src/middlewares/auth.js` `requireAuth`
+- Controller: `backend/src/controllers/authController.js` (`handleRefresh`, `handleMobileLogout`, cabang mobile pada OAuth callback)
+- OpenAPI: `backend/openapi.yaml` (security scheme `bearerAuth`)
+
+---
+
+*Terakhir diperbarui: 14 Juni 2026*

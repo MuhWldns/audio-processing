@@ -7,7 +7,7 @@ Backend API untuk platform RBX Royale. Menyediakan layanan audio processing, scr
 - **Runtime:** Bun
 - **Framework:** Express.js
 - **Database:** MySQL via Prisma ORM
-- **Auth:** Session-based OAuth (Google, Discord)
+- **Auth:** Dual-path — cookie session (web, Passport.js + express-session) and Bearer JWT (mobile/Flutter, HS256). Both paths converge at the same `requireAuth` middleware.
 - **Payment:** Bayar.gg (QRIS, webhook) & MustikaPay (QRIS, polling) — selected by `TOPUP_PROVIDER`
 - **Testing:** Vitest + Supertest
 
@@ -71,6 +71,21 @@ Backend mendukung dua payment gateway QRIS yang dipilih via env `TOPUP_PROVIDER`
 2. Set `MUSTIKAPAY_API_KEY` dan opsional `MUSTIKAPAY_BASE_URL` (default `https://mustikapayment.com`)
 3. Tidak perlu webhook secret — konfirmasi pembayaran dilakukan via polling (poller background + status endpoint), bukan webhook
 
+### 6. Setup Mobile Auth (Bearer JWT)
+
+Backend supports a Flutter mobile client that authenticates with `Authorization: Bearer <jwt>`. The flow runs alongside the existing cookie-based web auth — same OAuth endpoints, same callback URL, branched on a signed `state` parameter (`?platform=mobile`). Refresh tokens reuse the existing `Session` model (no schema migration).
+
+Required env vars:
+
+| Variable | Required | Default (dev) | Purpose |
+|---|---|---|---|
+| `JWT_SECRET` | Production: yes (server exits if unset) | warned default | HS256 signing for access JWT + HMAC for OAuth state |
+| `MOBILE_DEEP_LINK_REDIRECT` | Yes | `rbxroyale://auth` | Where the OAuth callback redirects mobile clients after issuing tokens |
+| `ACCESS_TOKEN_TTL_DAYS` | No | `7` | Access JWT lifetime |
+| `REFRESH_TOKEN_TTL_DAYS` | No | `30` | Refresh token lifetime (`Session.expiresAt`) |
+
+Design notes and rationale: see [`docs/superpowers/specs/2026-06-14-mobile-oauth-token-auth-design.md`](../docs/superpowers/specs/2026-06-14-mobile-oauth-token-auth-design.md).
+
 ## Menjalankan Server
 
 ```bash
@@ -96,16 +111,16 @@ Atau import ke Postman/Swagger UI.
 | Group | Endpoints | Auth |
 |-------|-----------|------|
 | Health | `GET /health`, `GET /db-health` | Public |
-| Auth | OAuth login, logout, session | Public/Session |
-| Upload | `POST /upload` | Session + API Key |
-| History | `GET /history`, download | Session |
-| Top-Up | Create, status, webhook | Session/Webhook |
+| Auth | OAuth login (web + `?platform=mobile`), logout, session, `POST /auth/refresh`, `POST /auth/logout-mobile` | Public/Session/Bearer |
+| Upload | `POST /upload` | Session/Bearer + API Key |
+| History | `GET /history`, download | Session/Bearer |
+| Top-Up | Create, status, webhook | Session/Bearer/Webhook |
 | Products | List, detail, categories | Public |
-| Cart | Add, remove, clear | Session |
-| Checkout | Purchase items | Session |
-| Licenses | List, detail, whitelist, download | Session |
+| Cart | Add, remove, clear | Session/Bearer |
+| Checkout | Purchase items | Session/Bearer |
+| Licenses | List, detail, whitelist, download | Session/Bearer |
 | Verification | Verify license key | Public (from Roblox) |
-| Admin | Products, categories, licenses, analytics | Admin |
+| Admin | Products, categories, licenses, analytics | Admin (Session/Bearer) |
 
 ## Struktur Folder
 
@@ -129,6 +144,7 @@ backend/
 │   │   └── healthController.js
 │   ├── services/              # Business logic
 │   │   ├── authService.js     # OAuth, session, quota
+│   │   ├── authTokenService.js # Mobile auth: sign/verify access JWT, issue/rotate/revoke refresh tokens, signed OAuth state
 │   │   ├── databaseService.js # Wallet operations (creditWallet, debitWallet)
 │   │   ├── bayarService.js    # Bayar.gg payment gateway
 │   │   ├── mustikaService.js  # MustikaPay payment gateway (QRIS, polling)
@@ -137,7 +153,7 @@ backend/
 │   │   ├── pricingService.js  # Duration-based pricing
 │   │   └── uploadService.js   # File upload handling
 │   ├── middlewares/           # Express middlewares
-│   │   ├── auth.js            # requireAuth
+│   │   ├── auth.js            # requireAuth (Bearer first, cookie fallback)
 │   │   ├── admin.js           # requireAdmin
 │   │   ├── upload.js          # File validation
 │   │   └── rateLimit.js       # Rate limiting
