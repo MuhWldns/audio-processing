@@ -130,6 +130,15 @@ if (!sessionSecret) {
   }
   console.warn("WARNING: SESSION_SECRET not set, using insecure default for development only");
 }
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret) {
+  if (process.env.NODE_ENV === "production") {
+    console.error("FATAL: JWT_SECRET is required in production");
+    process.exit(1);
+  }
+  console.warn("WARNING: JWT_SECRET not set, using insecure default for development only");
+  process.env.JWT_SECRET = "dev-only-insecure-jwt-secret";
+}
 const frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN || "http://localhost:5173";
 const uploadDir = path.join(__dirname, "..", "uploads");
 
