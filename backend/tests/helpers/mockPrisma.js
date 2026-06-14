@@ -53,7 +53,7 @@ export const mockPrisma = {
 };
 
 // Mock the prisma module
-vi.mock("../src/prisma.js", () => ({
+vi.mock("../../src/prisma.js", () => ({
   prisma: mockPrisma,
 }));
 
