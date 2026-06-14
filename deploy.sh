@@ -14,7 +14,7 @@ NC='\033[0m'
 
 # 1. Pull latest code
 echo -e "${GREEN}[1/7] Pulling latest code...${NC}"
-git pull origin release/0.1
+git pull origin main
 
 # 2. Install backend dependencies
 echo -e "${GREEN}[2/7] Installing backend dependencies...${NC}"
@@ -34,6 +34,12 @@ npm install --frozen-lockfile
 
 echo -e "${GREEN}[5/7] Building frontend...${NC}"
 npm run build
+
+# Next.js standalone output does not copy public/ or .next/static automatically.
+# PM2 runs .next/standalone/server.js, so these must be placed beside it or all
+# static assets (CSS, JS chunks, images) 404 at runtime.
+cp -r public .next/standalone/
+cp -r .next/static .next/standalone/.next/
 cd ..
 
 # 5. Create logs directory
