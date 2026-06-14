@@ -16,6 +16,7 @@ import { configurePassport } from "./services/authService.js";
 import { ensureAuthReady, requireAuth, createUploadLimiter, validateApiKey, validateAudioFile, requireAdmin, asyncHandler } from "./middlewares/index.js";
 import { configureMulter } from "./services/uploadService.js";
 import { startTopUpPoller } from "./services/topupPoller.js";
+import { signOAuthState } from "./services/authTokenService.js";
 import { validate } from "./validators/index.js";
 import {
   createTopUpSchema,
@@ -208,10 +209,18 @@ app.use(passport.session());
 // ==================== ROUTES ====================
 
 // Auth routes
-app.get("/auth/google", ensureAuthReady("google"), passport.authenticate("google", { scope: ["email", "profile"] }));
+app.get("/auth/google", ensureAuthReady("google"), (req, res, next) => {
+  const platform = req.query.platform === "mobile" ? "mobile" : "web";
+  const state = signOAuthState({ platform });
+  return passport.authenticate("google", { scope: ["email", "profile"], state })(req, res, next);
+});
 app.get("/auth/google/callback", ensureAuthReady("google"), passport.authenticate("google", { failureRedirect: `${frontendUrl}/?login=failed` }), handleGoogleCallback);
 
-app.get("/auth/discord", ensureAuthReady("discord"), passport.authenticate("discord", { scope: ["identify", "email"] }));
+app.get("/auth/discord", ensureAuthReady("discord"), (req, res, next) => {
+  const platform = req.query.platform === "mobile" ? "mobile" : "web";
+  const state = signOAuthState({ platform });
+  return passport.authenticate("discord", { scope: ["identify", "email"], state })(req, res, next);
+});
 app.get("/auth/discord/callback", ensureAuthReady("discord"), passport.authenticate("discord", { failureRedirect: `${frontendUrl}/?login=failed` }), handleDiscordCallback);
 
 app.post("/auth/logout", requireAuth, handleLogout);
