@@ -60,7 +60,7 @@ The backend gains a second auth path that runs in parallel with the existing coo
 
 `requireAuth` (in `backend/src/middlewares/auth.js`) is the single gate. It runs in this order on every protected request:
 
-1. If `Authorization: Bearer <token>` present → verify the JWT via `tokenService.verifyAccessToken`. If valid, set `req.user = { id, role }` and continue.
+1. If `Authorization: Bearer <token>` present → verify the JWT via `authTokenService.verifyAccessToken`. If valid, set `req.user = { id, role }` and continue.
 2. Else, fall back to the existing `req.isAuthenticated()` cookie check.
 3. If neither succeeds → 401.
 
@@ -78,8 +78,8 @@ The `state` parameter is HMAC-signed with `JWT_SECRET` so an attacker cannot for
 
 | File | Responsibility |
 | ---- | -------------- |
-| `backend/src/services/tokenService.js` | Issue/verify access JWTs. Issue/validate/rotate/revoke refresh tokens stored in the `Session` table. Pure module, all DB access via Prisma client passed in or imported. |
-| `backend/tests/services/tokenService.test.js` | Unit tests for tokenService. |
+| `backend/src/services/authTokenService.js` | Issue/verify access JWTs. Issue/validate/rotate/revoke refresh tokens stored in the `Session` table. Pure module, all DB access via Prisma client passed in or imported. |
+| `backend/tests/services/authTokenService.test.js` | Unit tests for authTokenService. |
 | `backend/tests/routes/mobileAuth.test.js` | Integration tests for the mobile callback branch, `/auth/refresh`, `/auth/logout-mobile`, and Bearer-token access to existing endpoints. |
 
 ### Modified files
@@ -95,7 +95,7 @@ The `state` parameter is HMAC-signed with `JWT_SECRET` so an attacker cannot for
 
 ### New dependency
 
-- `jsonwebtoken` — Node-standard JWT library. Used only inside `tokenService.js`.
+- `jsonwebtoken` — Node-standard JWT library. Used only inside `authTokenService.js`.
 
 ### Reused as-is
 
@@ -209,8 +209,8 @@ No changes to existing env vars. No changes to Google/Discord console (the same 
    Verify callback upserts User + OAuthAccount (existing logic, untouched).
 7. handleGoogleCallback runs:
      - parses state → platform === "mobile"
-     - access  = tokenService.issueAccessToken(user.id, user.role)
-     - refresh = await tokenService.issueRefreshToken(user.id, req.ip, req.get("user-agent"))
+     - access  = authTokenService.issueAccessToken(user.id, user.role)
+     - refresh = await authTokenService.issueRefreshToken(user.id, req.ip, req.get("user-agent"))
      - res.redirect(`${MOBILE_DEEP_LINK_REDIRECT}?access=<jwt>&refresh=<token>`)
 8. OS sees rbxroyale:// scheme → launches Flutter app
 9. App stores both tokens in flutter_secure_storage
@@ -236,7 +236,7 @@ No changes to existing env vars. No changes to Google/Discord console (the same 
 2. App's HTTP interceptor catches 401, reads stored refresh, then:
      POST /auth/refresh   Body: { refresh: "<token>" }
 3. handleRefresh:
-     - tokenService.validateRefreshToken(token)
+     - authTokenService.validateRefreshToken(token)
        → SELECT Session WHERE sessionToken = sha256(token) AND expiresAt > NOW()
      - If not found → reuse-detection: if we can identify the user from a
        prior access token, delete all their Sessions; return 401 refresh_invalid
@@ -370,7 +370,7 @@ Deliberately deferred (YAGNI for v1):
 
 Tests follow the existing project conventions: `vitest` + `supertest`, fixtures under `backend/tests/`, Prisma client mocked via `tests/helpers/mockPrisma.js`.
 
-### Unit — `tests/services/tokenService.test.js`
+### Unit — `tests/services/authTokenService.test.js`
 
 - Sign access token → verify returns the same payload.
 - Token past `exp` → verify throws with code `token_expired`.

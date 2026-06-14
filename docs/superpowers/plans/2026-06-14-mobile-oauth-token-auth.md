@@ -4,7 +4,7 @@
 
 **Goal:** Add a Bearer-token auth path alongside the existing cookie session, so the Flutter app can log in via system browser (Google/Discord) and call existing endpoints with a JWT — no schema migration, web cookie path unchanged.
 
-**Architecture:** New `tokenService.js` mints HS256 JWT access tokens (7d) and stores opaque refresh tokens (30d, SHA-256 hashed) in the existing `Session` table with rotation + reuse detection. `requireAuth` accepts either a Bearer token or a cookie session. OAuth callbacks branch on a HMAC-signed `state` parameter that distinguishes mobile from web; mobile redirects to `rbxroyale://auth?access=…&refresh=…` per `MOBILE_DEEP_LINK_REDIRECT` env. Two new endpoints — `POST /auth/refresh`, `POST /auth/logout-mobile` — round out the surface.
+**Architecture:** New `authTokenService.js` mints HS256 JWT access tokens (7d) and stores opaque refresh tokens (30d, SHA-256 hashed) in the existing `Session` table with rotation + reuse detection. `requireAuth` accepts either a Bearer token or a cookie session. OAuth callbacks branch on a HMAC-signed `state` parameter that distinguishes mobile from web; mobile redirects to `rbxroyale://auth?access=…&refresh=…` per `MOBILE_DEEP_LINK_REDIRECT` env. Two new endpoints — `POST /auth/refresh`, `POST /auth/logout-mobile` — round out the surface.
 
 **Tech Stack:** Node.js ESM, Express 4, Prisma (MySQL, no migration), passport (existing), `jsonwebtoken` (new), vitest + supertest, Bun runtime.
 
@@ -15,8 +15,8 @@
 ## File Structure
 
 **New:**
-- `backend/src/services/tokenService.js` — JWT access tokens, opaque refresh tokens, signed OAuth state. Single module, all crypto + DB centralized here.
-- `backend/tests/services/tokenService.test.js` — unit tests for tokenService.
+- `backend/src/services/authTokenService.js` — JWT access tokens, opaque refresh tokens, signed OAuth state. Single module, all crypto + DB centralized here.
+- `backend/tests/services/authTokenService.test.js` — unit tests for authTokenService.
 - `backend/tests/routes/mobileAuth.test.js` — integration tests for callback mobile branch, refresh, logout-mobile, regression coverage on Bearer path.
 
 **Modified:**
@@ -74,22 +74,22 @@ git commit -m "chore: add jsonwebtoken dep and mobile-auth env keys"
 
 ---
 
-## Task 2: tokenService — sign and verify access JWT
+## Task 2: authTokenService — sign and verify access JWT
 
 **Files:**
-- Create: `backend/src/services/tokenService.js`
-- Test: `backend/tests/services/tokenService.test.js`
+- Create: `backend/src/services/authTokenService.js`
+- Test: `backend/tests/services/authTokenService.test.js`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `backend/tests/services/tokenService.test.js`:
+Create `backend/tests/services/authTokenService.test.js`:
 
 ```js
 import { describe, it, expect, beforeEach } from "vitest";
 import jwt from "jsonwebtoken";
-import { signAccessToken, verifyAccessToken } from "../../src/services/tokenService.js";
+import { signAccessToken, verifyAccessToken } from "../../src/services/authTokenService.js";
 
-describe("tokenService — access JWT", () => {
+describe("authTokenService — access JWT", () => {
   beforeEach(() => {
     process.env.JWT_SECRET = "test-secret-do-not-use-in-prod";
     process.env.ACCESS_TOKEN_TTL_DAYS = "7";
@@ -136,14 +136,14 @@ describe("tokenService — access JWT", () => {
 
 Run from `backend/`:
 ```bash
-bun test tests/services/tokenService.test.js
+bun test tests/services/authTokenService.test.js
 ```
 
 Expected: all 5 tests FAIL with import or "function not defined" errors.
 
-- [ ] **Step 3: Create tokenService with access-JWT functions**
+- [ ] **Step 3: Create authTokenService with access-JWT functions**
 
-Create `backend/src/services/tokenService.js`:
+Create `backend/src/services/authTokenService.js`:
 
 ```js
 import jwt from "jsonwebtoken";
@@ -187,7 +187,7 @@ export function verifyAccessToken(token) {
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-bun test tests/services/tokenService.test.js
+bun test tests/services/authTokenService.test.js
 ```
 
 Expected: all 5 tests PASS.
@@ -195,29 +195,29 @@ Expected: all 5 tests PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/src/services/tokenService.js backend/tests/services/tokenService.test.js
-git commit -m "feat: tokenService — HS256 access JWT sign/verify with alg pinning"
+git add backend/src/services/authTokenService.js backend/tests/services/authTokenService.test.js
+git commit -m "feat: authTokenService — HS256 access JWT sign/verify with alg pinning"
 ```
 
 ---
 
-## Task 3: tokenService — refresh tokens with rotation and reuse detection
+## Task 3: authTokenService — refresh tokens with rotation and reuse detection
 
 **Files:**
-- Modify: `backend/src/services/tokenService.js`
-- Modify: `backend/tests/services/tokenService.test.js`
+- Modify: `backend/src/services/authTokenService.js`
+- Modify: `backend/tests/services/authTokenService.test.js`
 
 This task uses the `Session` model already defined in `backend/prisma/schema.prisma:117-130`. No schema changes.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `backend/tests/services/tokenService.test.js`:
+Append to `backend/tests/services/authTokenService.test.js`:
 
 ```js
-import { issueRefreshToken, validateRefreshToken, rotateRefreshToken, revokeRefreshToken, revokeAllSessionsForUser } from "../../src/services/tokenService.js";
+import { issueRefreshToken, validateRefreshToken, rotateRefreshToken, revokeRefreshToken, revokeAllSessionsForUser } from "../../src/services/authTokenService.js";
 import { mockPrisma, resetMockPrisma } from "../helpers/mockPrisma.js";
 
-describe("tokenService — refresh tokens", () => {
+describe("authTokenService — refresh tokens", () => {
   beforeEach(() => {
     resetMockPrisma();
     process.env.JWT_SECRET = "test-secret";
@@ -305,14 +305,14 @@ Read `backend/tests/helpers/mockPrisma.js`. If it does not include a `session` m
 - [ ] **Step 3: Run tests to verify they fail**
 
 ```bash
-cd backend && bun test tests/services/tokenService.test.js
+cd backend && bun test tests/services/authTokenService.test.js
 ```
 
 Expected: 7 new tests FAIL with "is not a function" or import errors.
 
 - [ ] **Step 4: Implement refresh token functions**
 
-Append to `backend/src/services/tokenService.js`:
+Append to `backend/src/services/authTokenService.js`:
 
 ```js
 import crypto from "node:crypto";
@@ -367,7 +367,7 @@ export async function revokeAllSessionsForUser(userId) {
 - [ ] **Step 5: Run tests to verify they pass**
 
 ```bash
-bun test tests/services/tokenService.test.js
+bun test tests/services/authTokenService.test.js
 ```
 
 Expected: all 12 tests PASS (5 access + 7 refresh).
@@ -375,28 +375,28 @@ Expected: all 12 tests PASS (5 access + 7 refresh).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add backend/src/services/tokenService.js backend/tests/services/tokenService.test.js backend/tests/helpers/mockPrisma.js
-git commit -m "feat: tokenService — opaque refresh tokens with rotation and revocation"
+git add backend/src/services/authTokenService.js backend/tests/services/authTokenService.test.js backend/tests/helpers/mockPrisma.js
+git commit -m "feat: authTokenService — opaque refresh tokens with rotation and revocation"
 ```
 
 ---
 
-## Task 4: tokenService — signed OAuth state for mobile detection
+## Task 4: authTokenService — signed OAuth state for mobile detection
 
 **Files:**
-- Modify: `backend/src/services/tokenService.js`
-- Modify: `backend/tests/services/tokenService.test.js`
+- Modify: `backend/src/services/authTokenService.js`
+- Modify: `backend/tests/services/authTokenService.test.js`
 
 The state parameter is HMAC-signed so an attacker cannot forge a callback that hijacks the mobile flow. We piggyback on `JWT_SECRET` for the HMAC key — same fail-closed guarantee, no extra config.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `backend/tests/services/tokenService.test.js`:
+Append to `backend/tests/services/authTokenService.test.js`:
 
 ```js
-import { signOAuthState, verifyOAuthState } from "../../src/services/tokenService.js";
+import { signOAuthState, verifyOAuthState } from "../../src/services/authTokenService.js";
 
-describe("tokenService — OAuth state", () => {
+describe("authTokenService — OAuth state", () => {
   beforeEach(() => {
     process.env.JWT_SECRET = "test-secret";
   });
@@ -430,14 +430,14 @@ describe("tokenService — OAuth state", () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-bun test tests/services/tokenService.test.js
+bun test tests/services/authTokenService.test.js
 ```
 
 Expected: 4 new tests FAIL.
 
 - [ ] **Step 3: Implement signed state**
 
-Append to `backend/src/services/tokenService.js`:
+Append to `backend/src/services/authTokenService.js`:
 
 ```js
 const STATE_VERSION = "v1";
@@ -472,7 +472,7 @@ export function verifyOAuthState(state) {
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-bun test tests/services/tokenService.test.js
+bun test tests/services/authTokenService.test.js
 ```
 
 Expected: all 16 tests PASS (5 access + 7 refresh + 4 state).
@@ -480,8 +480,8 @@ Expected: all 16 tests PASS (5 access + 7 refresh + 4 state).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/src/services/tokenService.js backend/tests/services/tokenService.test.js
-git commit -m "feat: tokenService — HMAC-signed OAuth state to prevent forgery"
+git add backend/src/services/authTokenService.js backend/tests/services/authTokenService.test.js
+git commit -m "feat: authTokenService — HMAC-signed OAuth state to prevent forgery"
 ```
 
 ---
@@ -499,7 +499,7 @@ git commit -m "feat: tokenService — HMAC-signed OAuth state to prevent forgery
 Append to `backend/tests/routes/auth.test.js`:
 
 ```js
-import { signAccessToken } from "../../src/services/tokenService.js";
+import { signAccessToken } from "../../src/services/authTokenService.js";
 
 describe("requireAuth — Bearer token path", () => {
   beforeEach(() => {
@@ -561,7 +561,7 @@ Replace the body of `requireAuth` in `backend/src/middlewares/auth.js`:
 
 ```js
 import { isOAuthReady } from "../services/authService.js";
-import { verifyAccessToken } from "../services/tokenService.js";
+import { verifyAccessToken } from "../services/authTokenService.js";
 import { prisma } from "../prisma.js";
 
 export const ensureAuthReady = (provider) => (req, res, next) => {
@@ -637,7 +637,7 @@ We replace the first one with a wrapper that injects a signed `state` when `?pla
 In `backend/src/server.js`, replace the line for `/auth/google` (currently around `server.js:211`) with:
 
 ```js
-import { signOAuthState } from "./services/tokenService.js";
+import { signOAuthState } from "./services/authTokenService.js";
 
 app.get("/auth/google", ensureAuthReady("google"), (req, res, next) => {
   const platform = req.query.platform === "mobile" ? "mobile" : "web";
@@ -695,7 +695,7 @@ import request from "supertest";
 import jwt from "jsonwebtoken";
 import { app } from "../helpers/testApp.js";
 import { mockPrisma, resetMockPrisma } from "../helpers/mockPrisma.js";
-import { signOAuthState, verifyAccessToken } from "../../src/services/tokenService.js";
+import { signOAuthState, verifyAccessToken } from "../../src/services/authTokenService.js";
 
 beforeEach(() => {
   resetMockPrisma();
@@ -776,7 +776,7 @@ import {
   revokeRefreshToken,
   revokeAllSessionsForUser,
   verifyAccessToken,
-} from "../services/tokenService.js";
+} from "../services/authTokenService.js";
 
 const getFrontendUrl = () =>
   process.env.FRONTEND_URL || process.env.CORS_ORIGIN || "http://localhost:5173";
@@ -865,7 +865,7 @@ Append to `backend/tests/routes/mobileAuth.test.js`:
 describe("POST /auth/refresh", () => {
   it("returns new access and refresh tokens for a valid refresh", async () => {
     // Pre-seed a Session row that validateRefreshToken will hit.
-    const { token } = await import("../../src/services/tokenService.js")
+    const { token } = await import("../../src/services/authTokenService.js")
       .then((m) => m.issueRefreshToken({ userId: "u-refresh-1" }));
     // Make findUnique resolve as if the row exists with the right hash.
     const hash = mockPrisma.session.create.mock.calls[0][0].data.sessionToken;
@@ -1013,7 +1013,7 @@ Idempotent endpoint that revokes a refresh token. Requires Bearer auth so we kno
 Append to `backend/tests/routes/mobileAuth.test.js`:
 
 ```js
-import { signAccessToken } from "../../src/services/tokenService.js";
+import { signAccessToken } from "../../src/services/authTokenService.js";
 
 describe("POST /auth/logout-mobile", () => {
   it("revokes the refresh token row and returns 200 (with valid Bearer)", async () => {
@@ -1147,7 +1147,7 @@ if (!jwtSecret) {
 }
 ```
 
-The dev fallback writes to `process.env.JWT_SECRET` so `tokenService.getJwtSecret()` (which reads from `process.env`) gets a value without changing tokenService at all.
+The dev fallback writes to `process.env.JWT_SECRET` so `authTokenService.getJwtSecret()` (which reads from `process.env`) gets a value without changing authTokenService at all.
 
 - [ ] **Step 2: Run the test suite**
 
@@ -1409,7 +1409,7 @@ Expected: all tests in this file PASS (callback × 4, refresh × 4, logout-mobil
 bun test
 ```
 
-Expected: zero regressions across the entire test suite. Watch the count — it should be the previous total + 17 new tests + 16 from `tokenService.test.js` + 4 in `auth.test.js` = previous total + 37.
+Expected: zero regressions across the entire test suite. Watch the count — it should be the previous total + 17 new tests + 16 from `authTokenService.test.js` + 4 in `auth.test.js` = previous total + 37.
 
 - [ ] **Step 4: Commit**
 
@@ -1454,7 +1454,7 @@ Start the server with a test `JWT_SECRET=test-only`, then:
 
 ```bash
 # Sign a state by hand and call the callback to confirm the redirect form.
-node -e "process.env.JWT_SECRET='test-only'; import('./src/services/tokenService.js').then(m => console.log(m.signOAuthState({platform:'mobile'})))"
+node -e "process.env.JWT_SECRET='test-only'; import('./src/services/authTokenService.js').then(m => console.log(m.signOAuthState({platform:'mobile'})))"
 # Take that value and visit: GET /auth/google/callback?code=...&state=<value>
 # Confirm the Location header starts with rbxroyale://auth?
 ```
