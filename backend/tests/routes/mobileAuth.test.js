@@ -15,10 +15,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
 import express from "express";
+import jwt from "jsonwebtoken";
 import { mockPrisma } from "../helpers/mockPrisma.js";
 import { signOAuthState, verifyAccessToken, signAccessToken } from "../../src/services/authTokenService.js";
 import { handleGoogleCallback, handleRefresh, handleMobileLogout } from "../../src/controllers/authController.js";
 import { requireAuth } from "../../src/middlewares/auth.js";
+import { requireAdmin } from "../../src/middlewares/admin.js";
 
 function buildCallbackApp(overrideUser) {
   const app = express();
@@ -244,5 +246,79 @@ describe("POST /auth/logout-mobile", () => {
       .set("Authorization", `Bearer ${access}`)
       .send({});
     expect(res.status).toBe(400);
+  });
+});
+
+function buildProtectedApp() {
+  const app = express();
+  app.use(express.json());
+  // /auth/me-style: just returns req.user.id
+  app.get("/protected/me", requireAuth, (req, res) => {
+    res.json({ id: req.user.id, role: req.user.role });
+  });
+  // simulate /admin/* gating
+  app.get("/protected/admin", requireAuth, requireAdmin, (req, res) => {
+    res.json({ ok: true });
+  });
+  app.use((err, req, res, next) => res.status(500).json({ error: err.message }));
+  return app;
+}
+
+describe("Bearer access — existing protected endpoints (regression)", () => {
+  beforeEach(() => {
+    process.env.JWT_SECRET = "test-secret";
+    process.env.ACCESS_TOKEN_TTL_DAYS = "7";
+    mockPrisma.user.findUnique.mockReset();
+  });
+
+  it("Bearer reaches a generic requireAuth endpoint and req.user is the DB row", async () => {
+    const access = signAccessToken("u-bearer-me", "USER");
+    mockPrisma.user.findUnique.mockResolvedValueOnce({
+      id: "u-bearer-me", role: "USER", email: "b@example.com",
+    });
+    const res = await request(buildProtectedApp())
+      .get("/protected/me")
+      .set("Authorization", `Bearer ${access}`);
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe("u-bearer-me");
+    expect(res.body.role).toBe("USER");
+  });
+
+  it("admin endpoint rejects a Bearer USER as 403", async () => {
+    const access = signAccessToken("u-bearer-user", "USER");
+    mockPrisma.user.findUnique.mockResolvedValueOnce({ id: "u-bearer-user", role: "USER" });
+    const res = await request(buildProtectedApp())
+      .get("/protected/admin")
+      .set("Authorization", `Bearer ${access}`);
+    expect(res.status).toBe(403);
+  });
+
+  it("admin endpoint accepts a Bearer ADMIN", async () => {
+    const access = signAccessToken("u-bearer-admin", "ADMIN");
+    mockPrisma.user.findUnique.mockResolvedValueOnce({ id: "u-bearer-admin", role: "ADMIN" });
+    const res = await request(buildProtectedApp())
+      .get("/protected/admin")
+      .set("Authorization", `Bearer ${access}`);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it("expired Bearer returns 401 token_expired", async () => {
+    const expired = jwt.sign({ sub: "u", role: "USER" }, process.env.JWT_SECRET, {
+      algorithm: "HS256", expiresIn: "-1s",
+    });
+    const res = await request(buildProtectedApp())
+      .get("/protected/me")
+      .set("Authorization", `Bearer ${expired}`);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("token_expired");
+  });
+
+  it("malformed Bearer returns 401 invalid_token", async () => {
+    const res = await request(buildProtectedApp())
+      .get("/protected/me")
+      .set("Authorization", "Bearer not-a-jwt");
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("invalid_token");
   });
 });
