@@ -101,11 +101,25 @@ describe("authTokenService — refresh tokens", () => {
     expect(result.token).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(mockPrisma.session.delete).toHaveBeenCalledWith({ where: { id: "s1" } });
     expect(mockPrisma.session.create).toHaveBeenCalledOnce();
+    const newRow = mockPrisma.session.create.mock.calls[0][0].data;
+    expect(newRow.userId).toBe("u1");
+    expect(newRow.ipAddress).toBe("9.9.9.9");
   });
 
   it("rotateRefreshToken returns null when the old token is not found (caller treats as reuse)", async () => {
     mockPrisma.session.findUnique.mockResolvedValueOnce(null);
     const result = await rotateRefreshToken("rotated-or-fake-token");
+    expect(result).toBeNull();
+  });
+
+  it("rotateRefreshToken returns null when the old row was deleted by a concurrent rotation (P2025)", async () => {
+    mockPrisma.session.findUnique.mockResolvedValueOnce({
+      id: "s-race", userId: "u-race", sessionToken: "old-hash",
+      expiresAt: new Date(Date.now() + 1_000_000),
+    });
+    const p2025 = Object.assign(new Error("Record to delete does not exist."), { code: "P2025" });
+    mockPrisma.$transaction.mockRejectedValueOnce(p2025);
+    const result = await rotateRefreshToken("token-being-raced");
     expect(result).toBeNull();
   });
 

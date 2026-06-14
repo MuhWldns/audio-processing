@@ -67,9 +67,20 @@ export async function validateRefreshToken(rawToken) {
 export async function rotateRefreshToken(rawOldToken, { ipAddress = null, userAgent = null } = {}) {
   const valid = await validateRefreshToken(rawOldToken);
   if (!valid) return null;
-  await prisma.session.delete({ where: { id: valid.sessionId } });
-  const issued = await issueRefreshToken({ userId: valid.userId, ipAddress, userAgent });
-  return { userId: valid.userId, token: issued.token, expiresAt: issued.expiresAt };
+  const token = generateRawToken();
+  const sessionToken = hashToken(token);
+  const expiresAt = new Date(Date.now() + getRefreshTtlMs());
+  try {
+    await prisma.$transaction([
+      prisma.session.delete({ where: { id: valid.sessionId } }),
+      prisma.session.create({ data: { userId: valid.userId, sessionToken, expiresAt, ipAddress, userAgent } }),
+    ]);
+  } catch (err) {
+    // Concurrent rotation: another request already deleted this session.
+    if (err?.code === "P2025") return null;
+    throw err;
+  }
+  return { userId: valid.userId, token, expiresAt };
 }
 
 export async function revokeRefreshToken(rawToken) {
