@@ -94,6 +94,17 @@ paths:
       operationId: authGoogle
       security: []
       description: Redirects user to Google consent screen
+      parameters:
+        - in: query
+          name: platform
+          required: false
+          schema:
+            type: string
+            enum: [mobile]
+          description: |
+            When `mobile`, the OAuth callback redirects to the deep link
+            (`MOBILE_DEEP_LINK_REDIRECT`) with `access` and `refresh` query
+            parameters instead of the web `FRONTEND_URL`.
       responses:
         "302":
           description: Redirect to Google OAuth
@@ -122,6 +133,17 @@ paths:
       operationId: authDiscord
       security: []
       description: Redirects user to Discord consent screen
+      parameters:
+        - in: query
+          name: platform
+          required: false
+          schema:
+            type: string
+            enum: [mobile]
+          description: |
+            When `mobile`, the OAuth callback redirects to the deep link
+            (`MOBILE_DEEP_LINK_REDIRECT`) with `access` and `refresh` query
+            parameters instead of the web `FRONTEND_URL`.
       responses:
         "302":
           description: Redirect to Discord OAuth
@@ -150,6 +172,7 @@ paths:
       operationId: authLogout
       security:
         - cookieAuth: []
+        - bearerAuth: []
       responses:
         "200":
           description: Logged out successfully
@@ -159,6 +182,81 @@ paths:
                 ok: true
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /auth/refresh:
+    post:
+      summary: Rotate a mobile refresh token into a new access + refresh pair
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh]
+              properties:
+                refresh:
+                  type: string
+      responses:
+        "200":
+          description: New token pair
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access, refresh, expiresIn]
+                properties:
+                  access:
+                    type: string
+                    description: New JWT access token
+                  refresh:
+                    type: string
+                    description: New opaque refresh token (old token is revoked)
+                  expiresIn:
+                    type: integer
+                    description: Access token TTL in seconds
+        "400":
+          description: Missing refresh field
+        "401":
+          description: |
+            `refresh_invalid` — refresh token unknown, expired, or already
+            rotated. If a Bearer access token is also supplied, all sessions
+            for that user are revoked as a reuse signal.
+        "429":
+          description: Rate limit exceeded
+
+  /auth/logout-mobile:
+    post:
+      summary: Revoke a mobile refresh token (idempotent)
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh]
+              properties:
+                refresh:
+                  type: string
+      responses:
+        "200":
+          description: Token revoked or already absent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        "400":
+          description: Missing refresh field
+        "401":
+          description: Bearer token missing or invalid
+        "429":
+          description: Rate limit exceeded
 
   /auth/me:
     get:
@@ -283,6 +381,7 @@ paths:
       operationId: uploadAudio
       security:
         - cookieAuth: []
+        - bearerAuth: []
         - apiKeyHeader: []
       description: |
         Upload an audio file. Checks daily free quota (3/day), deducts from wallet balance if quota exceeded.
@@ -345,6 +444,7 @@ paths:
       operationId: getHistory
       security:
         - cookieAuth: []
+        - bearerAuth: []
       responses:
         "200":
           description: List of upload records
@@ -377,6 +477,7 @@ paths:
       operationId: downloadHistory
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -413,6 +514,7 @@ paths:
       operationId: getUserTransactions
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: page
           in: query
@@ -453,6 +555,7 @@ paths:
       operationId: setRobloxUserId
       security:
         - cookieAuth: []
+        - bearerAuth: []
       description: Validates the Roblox user exists via the Roblox API before saving.
       requestBody:
         required: true
@@ -506,6 +609,7 @@ paths:
       operationId: createTopUp
       security:
         - cookieAuth: []
+        - bearerAuth: []
       description: |
         Creates a QRIS top-up order. Provider is selected by the server's TOPUP_PROVIDER env
         ("bayar.gg" uses a signed webhook; "mustika" uses polling — no webhook).
@@ -584,6 +688,7 @@ paths:
       operationId: getTopUpStatus
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: reference
           in: path
@@ -906,6 +1011,7 @@ paths:
       operationId: getCart
       security:
         - cookieAuth: []
+        - bearerAuth: []
       responses:
         "200":
           description: Cart items with total
@@ -936,6 +1042,7 @@ paths:
       operationId: clearCart
       security:
         - cookieAuth: []
+        - bearerAuth: []
       responses:
         "200":
           description: Cart cleared
@@ -953,6 +1060,7 @@ paths:
       operationId: addToCart
       security:
         - cookieAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1030,6 +1138,7 @@ paths:
       operationId: removeFromCart
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: itemId
           in: path
@@ -1060,6 +1169,7 @@ paths:
       operationId: checkout
       security:
         - cookieAuth: []
+        - bearerAuth: []
       description: |
         Deducts wallet balance, generates license keys for each item, clears cart.
         License maxGames by type: PERSONAL=3, COMMERCIAL=10, ENTERPRISE=unlimited.
@@ -1125,6 +1235,7 @@ paths:
       operationId: getLicenses
       security:
         - cookieAuth: []
+        - bearerAuth: []
       responses:
         "200":
           description: List of user licenses
@@ -1162,6 +1273,7 @@ paths:
       operationId: getLicenseDetail
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -1223,6 +1335,7 @@ paths:
       operationId: addGameToWhitelist
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -1313,6 +1426,7 @@ paths:
       operationId: removeGameFromWhitelist
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -1354,6 +1468,7 @@ paths:
       operationId: downloadLicenseFiles
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -1613,6 +1728,7 @@ paths:
       operationId: adminListProducts
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: page
           in: query
@@ -1665,6 +1781,7 @@ paths:
       operationId: adminCreateProduct
       security:
         - cookieAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1759,6 +1876,7 @@ paths:
       operationId: adminUpdateProduct
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -1839,6 +1957,7 @@ paths:
       operationId: adminDeleteProduct
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -1872,6 +1991,7 @@ paths:
       operationId: adminAddProductFile
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -1950,6 +2070,7 @@ paths:
       operationId: adminDeleteProductFile
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: productId
           in: path
@@ -1987,6 +2108,7 @@ paths:
       operationId: adminCreateCategory
       security:
         - cookieAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -2051,6 +2173,7 @@ paths:
       operationId: adminUpdateCategory
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -2115,6 +2238,7 @@ paths:
       operationId: adminDeleteCategory
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -2147,6 +2271,7 @@ paths:
       operationId: adminListLicenses
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: status
           in: query
@@ -2211,6 +2336,7 @@ paths:
       operationId: adminUpdateLicenseStatus
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -2270,6 +2396,7 @@ paths:
       operationId: adminActiveLicenses
       security:
         - cookieAuth: []
+        - bearerAuth: []
       responses:
         "200":
           description: Active licenses snapshot
@@ -2298,6 +2425,7 @@ paths:
       operationId: adminLicenseLogs
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -2342,6 +2470,7 @@ paths:
       operationId: adminKillSwitch
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -2384,6 +2513,7 @@ paths:
       operationId: adminListUsers
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: page
           in: query
@@ -2431,6 +2561,7 @@ paths:
       operationId: adminChangeUserRole
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -2485,6 +2616,7 @@ paths:
       operationId: adminAdjustUserBalance
       security:
         - cookieAuth: []
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -2544,6 +2676,7 @@ paths:
       operationId: adminAnalytics
       security:
         - cookieAuth: []
+        - bearerAuth: []
       responses:
         "200":
           description: Analytics data
@@ -2584,6 +2717,14 @@ components:
       in: header
       name: x-api-key
       description: Upload API key (required for /upload endpoint)
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Mobile clients send the access JWT issued by the OAuth callback (when
+        `?platform=mobile`) or by `POST /auth/refresh`. Web clients use cookie
+        sessions instead and do not need this header.
 
   responses:
     Unauthorized:
