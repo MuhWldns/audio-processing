@@ -190,4 +190,15 @@ describe("requireAuth — Bearer token path", () => {
     expect(res.status).toBe(401);
     expect(res.body.error).toBe("Not authenticated");
   });
+
+  it("propagates DB errors as 500, NOT 401, when user lookup throws", async () => {
+    const token = signAccessToken("user-db-fail", "USER");
+    prisma.user.findUnique.mockRejectedValueOnce(new Error("connection refused"));
+    const app = buildBearerApp();
+    const res = await request(app)
+      .get("/cart")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(500);
+    expect(res.body.error).not.toBe("invalid_token");
+  });
 });

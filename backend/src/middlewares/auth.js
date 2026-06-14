@@ -39,15 +39,20 @@ export const requireAuth = async (req, res, next) => {
   const header = req.get("authorization") || "";
   const match = /^Bearer\s+(.+)$/i.exec(header);
   if (match) {
+    let payload;
     try {
-      const payload = verifyAccessToken(match[1]);
+      payload = verifyAccessToken(match[1]);
+    } catch (err) {
+      const code = err?.code === "token_expired" ? "token_expired" : "invalid_token";
+      return res.status(401).json({ error: code });
+    }
+    try {
       const user = await prisma.user.findUnique({ where: { id: payload.sub } });
       if (!user) return res.status(401).json({ error: "invalid_token" });
       req.user = user;
       return next();
     } catch (err) {
-      const code = err?.code === "token_expired" ? "token_expired" : "invalid_token";
-      return res.status(401).json({ error: code });
+      return next(err);
     }
   }
 
