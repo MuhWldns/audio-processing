@@ -202,3 +202,92 @@ describe("requireAuth — Bearer token path", () => {
     expect(res.body.error).not.toBe("invalid_token");
   });
 });
+
+// Regression: /auth/me must accept Bearer JWT, not only cookie session.
+// Earlier version of /auth/me had no middleware so req.user was only ever
+// populated by the passport cookie deserializer. Mobile clients sending a
+// valid Bearer JWT got `{user: null}` back. optionalAuth fixes this.
+import { optionalAuth } from "../../src/middlewares/auth.js";
+
+function buildMeApp() {
+  const app = express();
+  app.use(express.json());
+  app.get("/auth/me", optionalAuth, handleGetMe);
+  app.use((err, req, res, next) => {
+    res.status(err.status || 500).json({ error: err.message });
+  });
+  return app;
+}
+
+describe("GET /auth/me — Bearer support (regression)", () => {
+  beforeEach(() => {
+    resetPrismaMocks();
+    process.env.JWT_SECRET = "test-secret";
+    process.env.ACCESS_TOKEN_TTL_DAYS = "7";
+  });
+
+  it("returns the user when called with a valid Bearer JWT", async () => {
+    const token = signAccessToken("user-me-bearer", "USER");
+    // optionalAuth's user lookup → returns minimal record.
+    prisma.user.findUnique.mockResolvedValueOnce({
+      id: "user-me-bearer",
+      role: "USER",
+    });
+    // handleGetMe → buildMePayload then re-fetches with include accounts.
+    prisma.user.findUnique.mockResolvedValueOnce({
+      id: "user-me-bearer",
+      publicId: "ACC-IDN-2606-000999",
+      email: "bearer@example.com",
+      displayName: "Bearer User",
+      role: "USER",
+      walletBalance: 0,
+      totalTopUp: 0,
+      totalSpent: 0,
+      freeAudioDateKey: null,
+      freeAudioUsedToday: 0,
+      freeAudioDailyLimit: 3,
+      paidAudioCost: 2000,
+      accounts: [{ provider: "GOOGLE" }],
+    });
+
+    const app = buildMeApp();
+    const res = await request(app)
+      .get("/auth/me")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.user).not.toBeNull();
+    expect(res.body.user.id).toBe("user-me-bearer");
+    expect(res.body.user.email).toBe("bearer@example.com");
+  });
+
+  it("returns {user:null} when called with no Bearer and no cookie", async () => {
+    const app = buildMeApp();
+    const res = await request(app).get("/auth/me");
+    expect(res.status).toBe(200);
+    expect(res.body.user).toBeNull();
+  });
+
+  it("returns 401 token_expired when Bearer is expired (NOT silently anonymous)", async () => {
+    const expired = jwt.sign(
+      { sub: "u", role: "USER" },
+      process.env.JWT_SECRET,
+      { algorithm: "HS256", expiresIn: "-1s" },
+    );
+    const app = buildMeApp();
+    const res = await request(app)
+      .get("/auth/me")
+      .set("Authorization", `Bearer ${expired}`);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("token_expired");
+  });
+
+  it("returns 401 invalid_token when Bearer is malformed", async () => {
+    const app = buildMeApp();
+    const res = await request(app)
+      .get("/auth/me")
+      .set("Authorization", "Bearer not-a-jwt");
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("invalid_token");
+  });
+});

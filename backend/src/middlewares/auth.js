@@ -61,3 +61,40 @@ export const requireAuth = async (req, res, next) => {
 
   return res.status(401).json({ error: "Not authenticated" });
 };
+
+/**
+ * Middleware untuk endpoint yang menerima auth opsional.
+ *
+ * Sama seperti requireAuth tapi tidak melempar 401 sat tak ada token.
+ * Dipakai oleh /auth/me yang harus mengembalikan `{user:null}` untuk
+ * pengunjung anonim, namun tetap harus memuat `req.user` dari Bearer JWT
+ * kalau client mobile mengirimnya.
+ *
+ * Kontrak:
+ *   - Tidak ada header Authorization → lewatkan; biarkan cookie deserializer
+ *     (atau ketiadaan-nya) yang menentukan `req.user`.
+ *   - Header Bearer ada & valid → muat user dari DB, set `req.user`.
+ *   - Header Bearer ada tapi rusak/kadaluarsa → 401 (sama dengan requireAuth)
+ *     supaya client tahu harus /auth/refresh, bukan diam-diam dianggap anonim.
+ */
+export const optionalAuth = async (req, res, next) => {
+  const token = parseBearerToken(req);
+  if (!token) {
+    return next();
+  }
+  let payload;
+  try {
+    payload = verifyAccessToken(token);
+  } catch (err) {
+    const code = err?.code === "token_expired" ? "token_expired" : "invalid_token";
+    return res.status(401).json({ error: code });
+  }
+  try {
+    const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user) return res.status(401).json({ error: "invalid_token" });
+    req.user = user;
+    return next();
+  } catch (err) {
+    return next(err);
+  }
+};

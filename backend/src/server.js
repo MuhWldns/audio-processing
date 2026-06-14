@@ -13,7 +13,7 @@ import passport from "passport";
 import { configurePassport } from "./services/authService.js";
 
 // Middlewares
-import { ensureAuthReady, requireAuth, createUploadLimiter, validateApiKey, validateAudioFile, requireAdmin, asyncHandler } from "./middlewares/index.js";
+import { ensureAuthReady, requireAuth, optionalAuth, createUploadLimiter, validateApiKey, validateAudioFile, requireAdmin, asyncHandler } from "./middlewares/index.js";
 import { configureMulter } from "./services/uploadService.js";
 import { startTopUpPoller } from "./services/topupPoller.js";
 import { signOAuthState, parseBearerToken } from "./services/authTokenService.js";
@@ -257,7 +257,7 @@ app.get("/auth/discord", ensureAuthReady("discord"), (req, res, next) => {
 app.get("/auth/discord/callback", ensureAuthReady("discord"), passport.authenticate("discord", { failureRedirect: `${frontendUrl}/?login=failed` }), handleDiscordCallback);
 
 app.post("/auth/logout", requireAuth, handleLogout);
-app.get("/auth/me", handleGetMe);
+app.get("/auth/me", optionalAuth, handleGetMe);
 app.post("/auth/refresh", refreshLimiter, asyncHandler(handleRefresh));
 app.post("/auth/logout-mobile", requireAuth, logoutMobileLimiter, asyncHandler(handleMobileLogout));
 
