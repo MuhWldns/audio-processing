@@ -107,22 +107,26 @@ export const handleCheckout = async (req, res) => {
   let result;
   try {
     result = await prisma.$transaction(async (tx) => {
-      // 1. Atomic balance check + deduct (prevents race condition)
-      const currentUser = await tx.user.findUnique({
-        where: { id: userId },
-        select: { walletBalance: true },
-      });
-
-      if (!currentUser || currentUser.walletBalance < purchaseTotal) {
-        throw new Error("INSUFFICIENT_BALANCE");
-      }
-
-      const updatedUser = await tx.user.update({
-        where: { id: userId },
+      // 1. Atomic conditional deduct (CAS) — prevents concurrent overspend.
+      // The WHERE walletBalance >= purchaseTotal guard makes the check and the
+      // decrement a single indivisible operation: only one of N concurrent
+      // transactions can satisfy the predicate and claim the funds.
+      const claim = await tx.user.updateMany({
+        where: { id: userId, walletBalance: { gte: purchaseTotal } },
         data: {
           walletBalance: { decrement: purchaseTotal },
           totalSpent: { increment: purchaseTotal },
         },
+      });
+
+      if (claim.count === 0) {
+        throw new Error("INSUFFICIENT_BALANCE");
+      }
+
+      // Safe read-back: the atomic claim above already secured the funds, so no
+      // other transaction can have double-spent this balance once count === 1.
+      const updatedUser = await tx.user.findUnique({
+        where: { id: userId },
         select: { walletBalance: true },
       });
 
@@ -224,10 +228,13 @@ export const handleCheckout = async (req, res) => {
   });
   } catch (err) {
     if (err.message === "INSUFFICIENT_BALANCE") {
+      // Do NOT report `user.walletBalance` here: it's a stale snapshot from the
+      // pre-check read and is misleading under concurrency (another request may
+      // have drained the balance after we read it). The atomic CAS is the
+      // authoritative rejection.
       return res.status(402).json({
         error: "Insufficient balance",
         required: purchaseTotal,
-        balance: user.walletBalance,
       });
     }
     throw err;
