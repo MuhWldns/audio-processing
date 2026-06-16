@@ -86,6 +86,27 @@ export const handleDiscordCallback = async (req, res) =>
 export const handleLogout = async (req, res, next) => {
   const userId = req.user.id;
 
+  // Bearer clients have no cookie session to destroy. Revoking all refresh
+  // tokens is the real logout for them — otherwise req.logout/session.destroy
+  // run as no-ops and the tokens stay alive while we report success.
+  if (parseBearerToken(req)) {
+    try {
+      await revokeAllSessionsForUser(userId);
+      await prisma.activityLog.create({
+        data: {
+          userId,
+          type: "LOGOUT",
+          status: "SUCCESS",
+          title: "Signed out",
+          description: "User signed out (mobile)",
+        },
+      });
+      return res.json({ ok: true });
+    } catch (err) {
+      return next(err);
+    }
+  }
+
   req.logout((error) => {
     if (error) {
       return next(error);

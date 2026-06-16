@@ -291,3 +291,81 @@ describe("GET /auth/me — Bearer support (regression)", () => {
     expect(res.body.error).toBe("invalid_token");
   });
 });
+
+// Regression: POST /auth/logout via Bearer must revoke refresh tokens, not just
+// run the cookie/session no-ops. Earlier version called req.logout() +
+// req.session.destroy() (no-ops for Bearer) and returned {ok:true} while the
+// user's refresh token stayed alive — a silent logout failure.
+import { handleLogout } from "../../src/controllers/authController.js";
+
+function buildLogoutApp() {
+  const app = express();
+  app.use(express.json());
+  app.post("/auth/logout", requireAuth, handleLogout);
+  app.use((err, req, res, next) => {
+    res.status(err.status || 500).json({ error: err.message });
+  });
+  return app;
+}
+
+describe("POST /auth/logout — Bearer path (regression)", () => {
+  beforeEach(() => {
+    resetPrismaMocks();
+    process.env.JWT_SECRET = "test-secret";
+    process.env.ACCESS_TOKEN_TTL_DAYS = "7";
+  });
+
+  it("revokes all refresh tokens for the user when called via Bearer", async () => {
+    const token = signAccessToken("user-logout-bearer", "USER");
+    prisma.user.findUnique.mockResolvedValueOnce({ id: "user-logout-bearer", role: "USER" });
+    prisma.session.deleteMany.mockResolvedValueOnce({ count: 2 });
+    prisma.activityLog.create.mockResolvedValueOnce({ id: "log-1" });
+
+    const app = buildLogoutApp();
+    const res = await request(app)
+      .post("/auth/logout")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(prisma.session.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "user-logout-bearer" },
+    });
+    expect(prisma.activityLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: "user-logout-bearer",
+        type: "LOGOUT",
+        status: "SUCCESS",
+      }),
+    });
+  });
+
+  it("is idempotent — returns 200 even when no refresh rows exist", async () => {
+    const token = signAccessToken("user-logout-empty", "USER");
+    prisma.user.findUnique.mockResolvedValueOnce({ id: "user-logout-empty", role: "USER" });
+    prisma.session.deleteMany.mockResolvedValueOnce({ count: 0 });
+    prisma.activityLog.create.mockResolvedValueOnce({ id: "log-2" });
+
+    const app = buildLogoutApp();
+    const res = await request(app)
+      .post("/auth/logout")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it("propagates DB errors as 500, NOT a false {ok:true}", async () => {
+    const token = signAccessToken("user-logout-dbfail", "USER");
+    prisma.user.findUnique.mockResolvedValueOnce({ id: "user-logout-dbfail", role: "USER" });
+    prisma.session.deleteMany.mockRejectedValueOnce(new Error("connection refused"));
+
+    const app = buildLogoutApp();
+    const res = await request(app)
+      .post("/auth/logout")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(500);
+    expect(res.body.ok).not.toBe(true);
+  });
+});
