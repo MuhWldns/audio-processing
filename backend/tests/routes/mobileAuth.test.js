@@ -18,7 +18,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { mockPrisma } from "../helpers/mockPrisma.js";
 import { signOAuthState, verifyAccessToken, signAccessToken } from "../../src/services/authTokenService.js";
-import { handleGoogleCallback, handleRefresh, handleMobileLogout } from "../../src/controllers/authController.js";
+import { handleGoogleCallback, handleRefresh, handleMobileLogout, redirectOAuthFailure } from "../../src/controllers/authController.js";
 import { requireAuth } from "../../src/middlewares/auth.js";
 import { requireAdmin } from "../../src/middlewares/admin.js";
 
@@ -94,6 +94,50 @@ describe("OAuth callback — mobile branch", () => {
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe("https://rbxroyale.dev/?login=failed");
     expect(mockPrisma.session.create).not.toHaveBeenCalled();
+  });
+});
+
+// Fix #6: OAuth FAILURE (user denied / token-exchange error) must land mobile
+// clients back in the app via deep link, not on the web frontend — otherwise
+// flutter_web_auth_2 hangs instead of resolving with an error.
+function buildFailureApp() {
+  const app = express();
+  app.get("/auth/google/callback", (req, res) => redirectOAuthFailure(req, res));
+  app.use((err, req, res, next) => res.status(500).json({ error: err.message }));
+  return app;
+}
+
+describe("redirectOAuthFailure — mobile vs web", () => {
+  it("redirects mobile-state failures to the deep link with error=oauth_failed", async () => {
+    const state = signOAuthState({ platform: "mobile" });
+    const res = await request(buildFailureApp())
+      .get(`/auth/google/callback?error=access_denied&state=${encodeURIComponent(state)}`);
+    expect(res.status).toBe(302);
+    const url = new URL(res.headers.location);
+    expect(url.protocol).toBe("rbxroyale:");
+    expect(url.searchParams.get("error")).toBe("oauth_failed");
+  });
+
+  it("redirects web-state failures to FRONTEND_URL/?login=failed", async () => {
+    const state = signOAuthState({ platform: "web" });
+    const res = await request(buildFailureApp())
+      .get(`/auth/google/callback?error=access_denied&state=${encodeURIComponent(state)}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("https://rbxroyale.dev/?login=failed");
+  });
+
+  it("redirects no-state failures to FRONTEND_URL/?login=failed (legacy/web)", async () => {
+    const res = await request(buildFailureApp())
+      .get("/auth/google/callback?error=access_denied");
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("https://rbxroyale.dev/?login=failed");
+  });
+
+  it("redirects forged-state failures to the web frontend (does not trust forged state)", async () => {
+    const res = await request(buildFailureApp())
+      .get("/auth/google/callback?error=access_denied&state=tampered.state.value.sig");
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("https://rbxroyale.dev/?login=failed");
   });
 });
 

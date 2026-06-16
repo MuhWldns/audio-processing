@@ -35,6 +35,7 @@ import {
 import {
   handleGoogleCallback,
   handleDiscordCallback,
+  redirectOAuthFailure,
   handleLogout,
   handleGetMe,
   handleRefresh,
@@ -247,14 +248,32 @@ app.get("/auth/google", ensureAuthReady("google"), (req, res, next) => {
   const state = signOAuthState({ platform });
   return passport.authenticate("google", { scope: ["email", "profile"], state })(req, res, next);
 });
-app.get("/auth/google/callback", ensureAuthReady("google"), passport.authenticate("google", { failureRedirect: `${frontendUrl}/?login=failed` }), handleGoogleCallback);
+app.get("/auth/google/callback", ensureAuthReady("google"), (req, res, next) => {
+  passport.authenticate("google", (err, user) => {
+    if (err) return next(err);
+    if (!user) return redirectOAuthFailure(req, res);
+    req.logIn(user, (loginErr) => {
+      if (loginErr) return next(loginErr);
+      return handleGoogleCallback(req, res);
+    });
+  })(req, res, next);
+});
 
 app.get("/auth/discord", ensureAuthReady("discord"), (req, res, next) => {
   const platform = req.query.platform === "mobile" ? "mobile" : "web";
   const state = signOAuthState({ platform });
   return passport.authenticate("discord", { scope: ["identify", "email"], state })(req, res, next);
 });
-app.get("/auth/discord/callback", ensureAuthReady("discord"), passport.authenticate("discord", { failureRedirect: `${frontendUrl}/?login=failed` }), handleDiscordCallback);
+app.get("/auth/discord/callback", ensureAuthReady("discord"), (req, res, next) => {
+  passport.authenticate("discord", (err, user) => {
+    if (err) return next(err);
+    if (!user) return redirectOAuthFailure(req, res);
+    req.logIn(user, (loginErr) => {
+      if (loginErr) return next(loginErr);
+      return handleDiscordCallback(req, res);
+    });
+  })(req, res, next);
+});
 
 app.post("/auth/logout", requireAuth, handleLogout);
 app.get("/auth/me", optionalAuth, handleGetMe);

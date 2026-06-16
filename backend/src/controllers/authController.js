@@ -24,6 +24,23 @@ const getMobileDeepLink = () =>
   process.env.MOBILE_DEEP_LINK_REDIRECT || "rbxroyale://auth";
 
 /**
+ * Redirect an OAuth FAILURE (user denied, token-exchange error, login error)
+ * to the right place based on the signed state. Mobile clients must land back
+ * in the app via deep link so flutter_web_auth_2 resolves with an error instead
+ * of hanging on the web frontend; web clients keep the existing behavior.
+ */
+export function redirectOAuthFailure(req, res) {
+  const stateRaw = req.query?.state;
+  const parsedState = stateRaw ? verifyOAuthState(stateRaw) : null;
+  if (parsedState?.platform === "mobile") {
+    const url = new URL(getMobileDeepLink());
+    url.searchParams.set("error", "oauth_failed");
+    return res.redirect(url.toString());
+  }
+  return res.redirect(`${getFrontendUrl()}/?login=failed`);
+}
+
+/**
  * Shared helper: branch OAuth callback on signed state.
  * - mobile: mint access+refresh tokens, redirect to deep link
  * - web (or no state): preserve existing FRONTEND_URL/?login=success behavior
