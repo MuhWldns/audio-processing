@@ -222,9 +222,15 @@ export async function creditTopUpOrder(orderId, { verifyAmount, requireAmountMat
       }
     }
 
-    // Atomic compare-and-swap claim: only one concurrent tx wins the PENDING->COMPLETED flip.
+    // Track whether we are reviving an order the auto-canceller already flipped to CANCELED.
+    const wasCanceled = order.status === "CANCELED";
+
+    // Atomic compare-and-swap claim: only one concurrent tx wins the flip to COMPLETED.
+    // Claim from PENDING OR CANCELED so a genuinely-paid order auto-cancelled at the
+    // timeout can still be revived. COMPLETED already short-circuited above, so it can
+    // never be re-claimed here (no double credit).
     const claim = await tx.topUpOrder.updateMany({
-      where: { id: order.id, status: "PENDING" },
+      where: { id: order.id, status: { in: ["PENDING", "CANCELED"] } },
       data: { status: "COMPLETED" },
     });
     if (claim.count === 0) {
@@ -254,12 +260,18 @@ export async function creditTopUpOrder(orderId, { verifyAmount, requireAmountMat
       },
     });
 
+    if (wasCanceled) {
+      // Late payment: the order was auto-cancelled but the provider then confirmed payment.
+      // Alert ops so the revival is visible and reconcilable.
+      console.warn(`[topup] REVIVED canceled order ${order.id} after provider confirmed payment — user ${order.userId} credited ${amount}`);
+    }
+
     await tx.activityLog.create({
       data: {
         userId: order.userId,
         type: "TOP_UP",
         status: "SUCCESS",
-        title: "Top up successful",
+        title: wasCanceled ? "Top up successful (late payment)" : "Top up successful",
         description: `Top up Rp ${amount.toLocaleString("id-ID")}`,
         amountRupiah: amount,
         metadata: paymentMeta,
@@ -275,6 +287,6 @@ export async function creditTopUpOrder(orderId, { verifyAmount, requireAmountMat
       },
     });
 
-    return { credited: true, userId: order.userId, amount };
+    return { credited: true, userId: order.userId, amount, revivedAfterCancel: wasCanceled };
   });
 }
