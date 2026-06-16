@@ -244,9 +244,15 @@ export const handleGetTopUpStatus = async (req, res) => {
           paymentMeta: { ref_no: order.externalId, checkedVia: "status-endpoint" },
         });
         status = "COMPLETED";
-      } else if (check.status === "expired" || ageMs > MUSTIKA_EXPIRY_MS) {
+      } else if (check.status === "expired") {
+        // Only the provider can authoritatively cancel. Local age alone must NOT
+        // cancel: a user who scans the QR near the 20-min mark may still be
+        // paying while our clock says "expired" — canceling here would strand a
+        // real payment. We log past-expiry-but-still-pending for observability.
         await prisma.topUpOrder.updateMany({ where: { id: order.id, status: "PENDING" }, data: { status: "CANCELED" } });
         status = "CANCELED";
+      } else if (ageMs > MUSTIKA_EXPIRY_MS) {
+        console.warn(`[topup] order ${order.id} past local expiry but provider still '${check.status}' — leaving PENDING`);
       }
       // otherwise (pending and within window): stay PENDING
     } catch (err) {

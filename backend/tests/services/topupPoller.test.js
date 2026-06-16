@@ -53,7 +53,24 @@ describe("pollPendingMustikaOrders", () => {
     creditSpy.mockRestore();
   });
 
-  it("auto-cancels a pending order older than 20 minutes when not yet paid", async () => {
+  it("cancels a pending order when the provider reports expired", async () => {
+    prisma.topUpOrder.count.mockResolvedValue(1);
+    prisma.topUpOrder.findMany.mockResolvedValue([
+      { id: "old", externalId: "QR-OLD", amountRupiah: 10000, createdAt: new Date(Date.now() - 21 * 60 * 1000), metadata: {} },
+    ]);
+    checkMustikaStatus.mockResolvedValue({ status: "expired" });
+    prisma.topUpOrder.updateMany.mockResolvedValue({ count: 1 });
+
+    await pollPendingMustikaOrders();
+
+    expect(prisma.topUpOrder.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "old", status: "PENDING" }, data: expect.objectContaining({ status: "CANCELED" }) })
+    );
+  });
+
+  it("leaves an order PENDING when local age exceeds 20 min but the provider still reports pending", async () => {
+    // A user scanning the QR near the deadline may still be paying. Only the
+    // provider can authoritatively cancel — local age alone must not.
     prisma.topUpOrder.count.mockResolvedValue(1);
     prisma.topUpOrder.findMany.mockResolvedValue([
       { id: "old", externalId: "QR-OLD", amountRupiah: 10000, createdAt: new Date(Date.now() - 21 * 60 * 1000), metadata: {} },
@@ -63,9 +80,7 @@ describe("pollPendingMustikaOrders", () => {
 
     await pollPendingMustikaOrders();
 
-    expect(prisma.topUpOrder.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "old", status: "PENDING" }, data: expect.objectContaining({ status: "CANCELED" }) })
-    );
+    expect(prisma.topUpOrder.updateMany).not.toHaveBeenCalled();
   });
 
   it("continues the batch when one order's check throws", async () => {

@@ -39,8 +39,13 @@ export async function pollPendingMustikaOrders() {
           providerName: MUSTIKA_PROVIDER,
           paymentMeta: { ref_no: order.externalId, checkedVia: "poller" },
         });
-      } else if (check.status === "expired" || isExpired) {
+      } else if (check.status === "expired") {
+        // Only the provider can authoritatively cancel. Local age alone must NOT
+        // cancel: a user scanning the QR near the 20-min mark may still be paying
+        // while our clock says "expired" — canceling would strand a real payment.
         await prisma.topUpOrder.updateMany({ where: { id: order.id, status: "PENDING" }, data: { status: "CANCELED" } });
+      } else if (isExpired) {
+        console.warn(`[poller] order ${order.id} past local expiry but provider still '${check.status}' — leaving PENDING`);
       }
     } catch (err) {
       console.error(`[poller] order ${order.id} check failed:`, err.message);

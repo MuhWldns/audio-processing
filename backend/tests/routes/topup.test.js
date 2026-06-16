@@ -311,10 +311,10 @@ describe("Top-up Routes", () => {
       expect(checkMustikaStatus).toHaveBeenCalledWith("QR-TEST-1");
     });
 
-    it("auto-cancels a mustika order older than 20 minutes without crediting", async () => {
+    it("cancels a mustika order when the provider reports expired", async () => {
       const { checkMustikaStatus } = await import("../../src/services/mustikaService.js");
-      // Cancel now requires a provider check first; provider reports still-unpaid.
-      checkMustikaStatus.mockResolvedValue({ status: "pending" });
+      // Only the provider can authoritatively cancel. Provider says expired.
+      checkMustikaStatus.mockResolvedValue({ status: "expired" });
 
       prisma.topUpOrder.findFirst.mockResolvedValue({
         id: "order-old",
@@ -341,6 +341,36 @@ describe("Top-up Routes", () => {
           data: expect.objectContaining({ status: "CANCELED" }),
         })
       );
+    });
+
+    it("leaves an OLD pending order PENDING when the provider still reports pending (may still be paying)", async () => {
+      const { checkMustikaStatus } = await import("../../src/services/mustikaService.js");
+      // Local clock says >20 min, but the provider still reports pending. A user
+      // scanning the QR near the deadline may still be paying — canceling here
+      // would strand a real payment, so we must leave it PENDING.
+      checkMustikaStatus.mockResolvedValue({ status: "pending" });
+
+      prisma.topUpOrder.findFirst.mockResolvedValue({
+        id: "order-old-pending",
+        publicId: "TOP-IDR-2606-000004",
+        provider: "mustika",
+        externalId: "QR-OLD-PENDING",
+        status: "PENDING",
+        amountRupiah: 50000,
+        finalAmount: null,
+        metadata: {},
+        createdAt: new Date(Date.now() - 21 * 60 * 1000),
+        updatedAt: new Date(Date.now() - 21 * 60 * 1000),
+      });
+      prisma.topUpOrder.updateMany.mockResolvedValue({ count: 1 });
+
+      const app = buildApp();
+      const res = await request(app).get("/topup/status/order-old-pending");
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("PENDING");
+      // Must NOT cancel while the provider still reports pending.
+      expect(prisma.topUpOrder.updateMany).not.toHaveBeenCalled();
     });
 
     it("credits an OLD pending mustika order (>20 min) when the provider reports success", async () => {
