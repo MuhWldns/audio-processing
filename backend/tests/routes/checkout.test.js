@@ -241,13 +241,16 @@ describe("Checkout Route", () => {
       expect(rejected.body.required).toBe(600);
     });
 
-    it("catch-path 402 (pre-check passes, CAS loses the race) omits the stale balance number", async () => {
+    it("catch-path 402 (pre-check passes, CAS loses the race) reports a fresh balance and shortfall", async () => {
       // Pre-check reads a sufficient balance (fresh, optimistic) but by the time
       // the transaction runs another request has drained the funds, so the CAS
-      // returns count 0. This is the exact path whose response must NOT echo the
-      // now-stale pre-check balance.
+      // returns count 0. The catch path does a FRESH read of the now-current
+      // balance so the 402 reflects actual state, not the stale pre-check
+      // snapshot — and matches the pre-check 402 shape exactly.
       setupContention({ startBalance: 1000, price: 600 });
-      prisma.user.findUnique.mockResolvedValue({ walletBalance: 1000, email: "test@example.com", displayName: "Test User" });
+      prisma.user.findUnique
+        .mockResolvedValueOnce({ walletBalance: 1000, email: "test@example.com", displayName: "Test User" }) // pre-check passes (optimistic)
+        .mockResolvedValueOnce({ walletBalance: 200, email: "test@example.com", displayName: "Test User" }); // fresh read sees drained balance
       prisma.user.updateMany.mockResolvedValue({ count: 0 }); // CAS always loses
       const app = buildApp();
 
@@ -256,7 +259,8 @@ describe("Checkout Route", () => {
       expect(res.status).toBe(402);
       expect(res.body.error).toBe("Insufficient balance");
       expect(res.body.required).toBe(600);
-      expect(res.body).not.toHaveProperty("balance");
+      expect(res.body.balance).toBe(200);
+      expect(res.body.shortfall).toBe(400);
     });
 
     it("2. two parallel checkouts each == half balance (both fit) -> both 201, balance 0", async () => {

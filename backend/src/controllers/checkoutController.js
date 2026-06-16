@@ -228,13 +228,20 @@ export const handleCheckout = async (req, res) => {
   });
   } catch (err) {
     if (err.message === "INSUFFICIENT_BALANCE") {
-      // Do NOT report `user.walletBalance` here: it's a stale snapshot from the
-      // pre-check read and is misleading under concurrency (another request may
-      // have drained the balance after we read it). The atomic CAS is the
-      // authoritative rejection.
+      // The CAS lost the race: the pre-check snapshot is stale (another request
+      // drained the balance after we read it). Do a FRESH read so the 402
+      // reflects the user's actual current balance, and return the same shape as
+      // the pre-check 402 for a consistent API contract on the money path.
+      const freshUser = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { walletBalance: true },
+      });
+      const currentBalance = freshUser?.walletBalance ?? 0;
       return res.status(402).json({
         error: "Insufficient balance",
         required: purchaseTotal,
+        balance: currentBalance,
+        shortfall: Math.max(0, purchaseTotal - currentBalance),
       });
     }
     throw err;
