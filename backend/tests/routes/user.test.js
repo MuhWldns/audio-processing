@@ -240,5 +240,79 @@ describe("User Controller", () => {
         })
       );
     });
+
+    it("deducts via conditional CAS on the negative branch (no plain update)", async () => {
+      // Pre-check sees enough balance; the CAS claim succeeds (count: 1).
+      prisma.user.findUnique
+        .mockResolvedValueOnce({ id: "user-2", walletBalance: 50000, email: "x", displayName: "X" }) // pre-check
+        .mockResolvedValueOnce({ id: "user-2", walletBalance: 30000 }); // read-back after CAS
+      prisma.user.updateMany.mockResolvedValue({ count: 1 });
+      prisma.publicIdCounter.upsert.mockResolvedValue({ nextNumber: 2 });
+      prisma.walletTransaction.create.mockResolvedValue({});
+      prisma.activityLog.create.mockResolvedValue({});
+
+      const app = buildApp({ ...mockUser, role: "ADMIN" });
+      const res = await request(app).post("/admin/users/user-2/adjust-balance").send({ amount: -20000, reason: "deduct" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.user.newBalance).toBe(30000);
+      // Negative branch MUST use the guarded updateMany, never a plain update.
+      expect(prisma.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "user-2", walletBalance: { gte: 20000 } },
+          data: { walletBalance: { decrement: 20000 } },
+        })
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 when a concurrent deduct wins the race (CAS count 0)", async () => {
+      // Pre-check passes on a stale snapshot, but by the time the CAS runs another
+      // deduct already drained the balance, so the guarded updateMany matches 0 rows.
+      prisma.user.findUnique
+        .mockResolvedValueOnce({ id: "user-2", walletBalance: 20000, email: "x", displayName: "X" }) // stale pre-check
+        .mockResolvedValueOnce({ id: "user-2", walletBalance: 5000 }); // fresh read in catch
+      prisma.user.updateMany.mockResolvedValue({ count: 0 });
+
+      const app = buildApp({ ...mockUser, role: "ADMIN" });
+      const res = await request(app).post("/admin/users/user-2/adjust-balance").send({ amount: -20000, reason: "deduct" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("negative balance");
+      // Error reflects the ACTUAL current balance, not the stale pre-check snapshot.
+      expect(res.body.currentBalance).toBe(5000);
+      // No ledger row written when the claim lost.
+      expect(prisma.walletTransaction.create).not.toHaveBeenCalled();
+    });
+
+    it("allows a negative deduct that exactly empties the balance", async () => {
+      prisma.user.findUnique
+        .mockResolvedValueOnce({ id: "user-2", walletBalance: 20000, email: "x", displayName: "X" })
+        .mockResolvedValueOnce({ id: "user-2", walletBalance: 0 });
+      prisma.user.updateMany.mockResolvedValue({ count: 1 });
+      prisma.publicIdCounter.upsert.mockResolvedValue({ nextNumber: 2 });
+      prisma.walletTransaction.create.mockResolvedValue({});
+      prisma.activityLog.create.mockResolvedValue({});
+
+      const app = buildApp({ ...mockUser, role: "ADMIN" });
+      const res = await request(app).post("/admin/users/user-2/adjust-balance").send({ amount: -20000, reason: "deduct all" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.user.newBalance).toBe(0);
+    });
+
+    it("positive adjust uses a plain increment (not the CAS path)", async () => {
+      prisma.user.findUnique.mockResolvedValue({ id: "user-2", walletBalance: 10000, email: "x", displayName: "X" });
+      prisma.user.update.mockResolvedValue({ id: "user-2", walletBalance: 35000 });
+      prisma.publicIdCounter.upsert.mockResolvedValue({ nextNumber: 2 });
+      prisma.walletTransaction.create.mockResolvedValue({});
+      prisma.activityLog.create.mockResolvedValue({});
+
+      const app = buildApp({ ...mockUser, role: "ADMIN" });
+      const res = await request(app).post("/admin/users/user-2/adjust-balance").send({ amount: 25000, reason: "Bonus" });
+
+      expect(res.status).toBe(200);
+      expect(prisma.user.updateMany).not.toHaveBeenCalled();
+    });
   });
 });

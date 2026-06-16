@@ -196,15 +196,36 @@ export const handleAdminAdjustUserBalance = async (req, res) => {
   }
 
   // Atomic adjust
-  const result = await prisma.$transaction(async (tx) => {
-    const updated = await tx.user.update({
-      where: { id },
-      data: {
-        walletBalance: amount > 0 ? { increment: amount } : { decrement: Math.abs(amount) },
-        totalTopUp: amount > 0 ? { increment: amount } : undefined,
-      },
-      select: { id: true, walletBalance: true },
-    });
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+    // Negative adjustments use a conditional CAS (WHERE walletBalance >= amount)
+    // so two concurrent deducts can't both pass the stale pre-check above and
+    // drive the balance negative. Positive adjustments can't underflow, so a
+    // plain update is fine.
+    let updated;
+    if (amount < 0) {
+      const claim = await tx.user.updateMany({
+        where: { id, walletBalance: { gte: Math.abs(amount) } },
+        data: { walletBalance: { decrement: Math.abs(amount) } },
+      });
+      if (claim.count === 0) {
+        throw new Error("INSUFFICIENT_BALANCE");
+      }
+      updated = await tx.user.findUnique({
+        where: { id },
+        select: { id: true, walletBalance: true },
+      });
+    } else {
+      updated = await tx.user.update({
+        where: { id },
+        data: {
+          walletBalance: { increment: amount },
+          totalTopUp: { increment: amount },
+        },
+        select: { id: true, walletBalance: true },
+      });
+    }
 
     const transactionPublicId = await generatePublicId(tx, "TXN", "ADJ");
 
@@ -235,6 +256,23 @@ export const handleAdminAdjustUserBalance = async (req, res) => {
 
     return updated;
   });
+  } catch (err) {
+    if (err.message === "INSUFFICIENT_BALANCE") {
+      // The CAS lost the race: another deduct drained the balance after our
+      // stale pre-check read. Re-read so the response reflects actual balance.
+      const fresh = await prisma.user.findUnique({
+        where: { id },
+        select: { walletBalance: true },
+      });
+      const currentBalance = fresh?.walletBalance ?? 0;
+      return res.status(400).json({
+        error: "Adjustment would result in negative balance",
+        currentBalance,
+        adjustment: amount,
+      });
+    }
+    throw err;
+  }
 
   return res.status(200).json({
     ok: true,
