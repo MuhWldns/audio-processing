@@ -1,18 +1,20 @@
 import { prisma } from "../prisma.js";
-import { createMustikaQris, checkMustikaStatus } from "../services/mustikaService.js";
-import { creditTopUpOrder } from "../services/databaseService.js";
+import { createQris } from "../services/mustika/client.js";
+import { processMustikaWebhook } from "../services/mustika/webhook.js";
+import { manualCheckTopUp } from "../services/mustika/reconcile.js";
 import { generatePublicId } from "../services/publicIdService.js";
 
 const MIN_TOPUP_AMOUNT = 1000;
 const MAX_QRIS_AMOUNT = 500000;
 const MUSTIKA_PROVIDER = "mustika";
 const MUSTIKA_EXPIRY_MIN = 20;
-const MUSTIKA_EXPIRY_MS = 20 * 60 * 1000;
 
 const toNumber = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : NaN;
 };
+
+const buildExpiresAt = () => new Date(Date.now() + MUSTIKA_EXPIRY_MIN * 60 * 1000).toISOString();
 
 const buildStatusResponse = (order, status = order.status) => {
   const meta = order.metadata || {};
@@ -23,8 +25,8 @@ const buildStatusResponse = (order, status = order.status) => {
     status,
     amount: order.amountRupiah,
     finalAmount: order.finalAmount,
-    qrisImageUrl: meta.qrUrl || meta.qrisImageUrl || null,
-    paymentUrl: meta.paymentLink || meta.paymentUrl || null,
+    qrisImageUrl: meta.qrUrl || null,
+    paymentUrl: meta.paymentLink || null,
     expiresAt: meta.expiresAt || null,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
@@ -48,15 +50,7 @@ export const handleCreateTopUp = async (req, res) => {
 
   const customerName = req.body?.customer_name;
   const redirectUrl = `${process.env.FRONTEND_URL || ""}/topup`;
-  const expiresAt = new Date(Date.now() + MUSTIKA_EXPIRY_MIN * 60 * 1000).toISOString();
-
-  const payment = await createMustikaQris({
-    amount,
-    productName: `Top up Rp ${amount.toLocaleString("id-ID")}`,
-    customerName,
-    expiry: MUSTIKA_EXPIRY_MIN,
-    redirectUrl,
-  });
+  const expiresAt = buildExpiresAt();
 
   const order = await prisma.$transaction(async (tx) => {
     const publicId = await generatePublicId(tx, "TOP", "IDR");
@@ -65,29 +59,54 @@ export const handleCreateTopUp = async (req, res) => {
         publicId,
         userId: req.user.id,
         provider: MUSTIKA_PROVIDER,
-        externalId: payment.refNo,
+        externalId: null,
         amountRupiah: amount,
         finalAmount: null,
         status: "PENDING",
-        metadata: {
-          qrUrl: payment.qrUrl,
-          paymentLink: payment.paymentLink,
-          expiresAt,
-        },
+        metadata: { expiresAt },
       },
     });
   });
 
-  return res.status(201).json({
-    ok: true,
-    orderId: order.id,
-    publicId: order.publicId,
-    invoiceId: payment.refNo,
-    amount,
-    paymentUrl: payment.paymentLink,
-    qrisImageUrl: payment.qrUrl,
-    expiresAt,
-  });
+  try {
+    const payment = await createQris({
+      amount,
+      productName: `Top up Rp ${amount.toLocaleString("id-ID")}`,
+      customerName,
+      expiry: MUSTIKA_EXPIRY_MIN,
+      redirectUrl,
+    });
+
+    const metadata = {
+      ...(order.metadata || {}),
+      qrUrl: payment.qrUrl,
+      paymentLink: payment.paymentLink,
+      expiresAt,
+      createRaw: payment.raw,
+    };
+
+    const updated = await prisma.topUpOrder.update({
+      where: { id: order.id },
+      data: { externalId: payment.refNo, metadata },
+    });
+
+    return res.status(201).json({
+      ok: true,
+      orderId: updated.id,
+      publicId: updated.publicId,
+      invoiceId: payment.refNo,
+      amount,
+      paymentUrl: payment.paymentLink,
+      qrisImageUrl: payment.qrUrl,
+      expiresAt,
+    });
+  } catch (err) {
+    await prisma.topUpOrder.updateMany({
+      where: { id: order.id, status: "PENDING" },
+      data: { status: "FAILED", metadata: { ...(order.metadata || {}), createError: err.message } },
+    });
+    throw err;
+  }
 };
 
 export const handleGetTopUpStatus = async (req, res) => {
@@ -120,32 +139,29 @@ export const handleGetTopUpStatus = async (req, res) => {
     return res.status(404).json({ error: "Order not found" });
   }
 
-  let status = order.status;
+  return res.status(200).json(buildStatusResponse(order));
+};
 
-  // Active confirmation for pending MustikaPay orders (no trusted webhook)
-  if (status === "PENDING" && order.provider === MUSTIKA_PROVIDER) {
-    const ageMs = Date.now() - new Date(order.createdAt).getTime();
-    try {
-      const check = await checkMustikaStatus(order.externalId);
-      if (check.status === "success") {
-        await creditTopUpOrder(order.id, {
-          verifyAmount: check.amount,
-          requireAmountMatch: true,
-          finalAmount: check.amount,
-          providerName: MUSTIKA_PROVIDER,
-          paymentMeta: { ref_no: order.externalId, checkedVia: "status-endpoint" },
-        });
-        status = "COMPLETED";
-      } else if (check.status === "expired") {
-        await prisma.topUpOrder.updateMany({ where: { id: order.id, status: "PENDING" }, data: { status: "CANCELED" } });
-        status = "CANCELED";
-      } else if (ageMs > MUSTIKA_EXPIRY_MS) {
-        console.warn(`[topup] order ${order.id} past local expiry but provider still '${check.status}' — leaving PENDING`);
-      }
-    } catch (err) {
-      console.error("[topup] MustikaPay status check failed:", err.message);
-    }
+export const handleManualCheckTopUp = async (req, res) => {
+  const { reference } = req.params;
+
+  if (!reference) {
+    return res.status(400).json({ error: "Reference is required" });
   }
 
-  return res.status(200).json(buildStatusResponse(order, status));
+  const result = await manualCheckTopUp({ userId: req.user.id, reference });
+
+  if (!result.ok) {
+    return res.status(result.statusCode).json({ error: result.error });
+  }
+
+  return res.status(200).json(result);
+};
+
+export const handleMustikaWebhook = async (req, res) => {
+  res.status(200).json({ status: "received" });
+
+  processMustikaWebhook(req.body).catch((err) => {
+    console.error("[mustika webhook] processing failed:", err);
+  });
 };

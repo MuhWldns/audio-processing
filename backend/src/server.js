@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
+import { startAutoCanceler } from "./services/mustika/reconcile.js";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import express from "express";
@@ -46,6 +47,8 @@ import {
   handleDbHealthCheck,
   handleCreateTopUp,
   handleGetTopUpStatus,
+  handleManualCheckTopUp,
+  handleMustikaWebhook,
   handleGetProducts,
   handleGetProductDetail,
   handleGetCategories,
@@ -292,6 +295,8 @@ app.put("/user/roblox-id", requireAuth, handleSetRobloxUserId);
 // Top up routes
 app.post("/topup/create", requireAuth, topupLimiter, validate(createTopUpSchema), asyncHandler(handleCreateTopUp));
 app.get("/topup/status/:reference", requireAuth, topupStatusLimiter, asyncHandler(handleGetTopUpStatus));
+app.post("/topup/check/:reference", requireAuth, topupStatusLimiter, asyncHandler(handleManualCheckTopUp));
+app.post("/webhooks/mustika", handleMustikaWebhook);
 
 // Health check routes
 app.get("/health", handleHealthCheck);
