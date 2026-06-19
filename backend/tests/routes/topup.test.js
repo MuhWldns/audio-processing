@@ -33,20 +33,14 @@ const mockPrisma = {
 
 vi.mock("../../src/prisma.js", () => ({ prisma: mockPrisma }));
 
-// Mock mustika client
+// Mock mustika client — only override createQris
 vi.mock("../../src/services/mustika/client.js", () => ({
-  createQris: vi.fn().mockResolvedValue({
-    refNo: "QR123",
-    qrUrl: "https://mustikapayment.com/api/qr?data=000201&ref_no=QR123",
-    paymentLink: "https://mustikapayment.com/pay/QR123",
-    amount: 50000,
-    raw: { status: "success", ref_no: "QR123" },
-  }),
+  createQris: vi.fn(),
 }));
 
 // Mock mustika webhook processor
 vi.mock("../../src/services/mustika/webhook.js", () => ({
-  processMustikaWebhook: vi.fn().mockResolvedValue({ processed: true, credited: true }),
+  processMustikaWebhook: vi.fn(),
 }));
 
 // Mock mustika reconcile
@@ -109,6 +103,15 @@ describe("Top-up Routes", () => {
   // ── Create top-up ──
 
   it("creates a MustikaPay QRIS order and stores ref_no as externalId", async () => {
+    const { createQris } = await import("../../src/services/mustika/client.js");
+    createQris.mockResolvedValue({
+      refNo: "QR123",
+      qrUrl: "https://mustikapayment.com/api/qr?data=000201&ref_no=QR123",
+      paymentLink: "https://mustikapayment.com/pay/QR123",
+      amount: 50000,
+      raw: { status: "success", ref_no: "QR123" },
+    });
+
     mockPrisma.publicIdCounter.upsert.mockResolvedValue({ scope: "TOP-IDR-2606", nextNumber: 2 });
     mockPrisma.topUpOrder.create.mockResolvedValue({
       id: "order-1",
@@ -203,6 +206,7 @@ describe("Top-up Routes", () => {
 
   it("POST /webhooks/mustika responds received immediately", async () => {
     const { processMustikaWebhook } = await import("../../src/services/mustika/webhook.js");
+    processMustikaWebhook.mockResolvedValue({ processed: true, credited: true });
     const app = buildApp();
 
     const res = await request(app).post("/webhooks/mustika").send({ status: "success", service: "QRIS", reference: "QR123" });
