@@ -15,7 +15,6 @@ import { configurePassport } from "./services/authService.js";
 // Middlewares
 import { ensureAuthReady, requireAuth, optionalAuth, createUploadLimiter, validateApiKey, validateAudioFile, requireAdmin, asyncHandler } from "./middlewares/index.js";
 import { configureMulter } from "./services/uploadService.js";
-import { startTopUpPoller } from "./services/topupPoller.js";
 import { signOAuthState, parseBearerToken } from "./services/authTokenService.js";
 import { validate } from "./validators/index.js";
 import {
@@ -46,7 +45,6 @@ import {
   handleHealthCheck,
   handleDbHealthCheck,
   handleCreateTopUp,
-  handleBayarWebhook,
   handleGetTopUpStatus,
   handleGetProducts,
   handleGetProductDetail,
@@ -294,7 +292,6 @@ app.put("/user/roblox-id", requireAuth, handleSetRobloxUserId);
 // Top up routes
 app.post("/topup/create", requireAuth, topupLimiter, validate(createTopUpSchema), asyncHandler(handleCreateTopUp));
 app.get("/topup/status/:reference", requireAuth, topupStatusLimiter, asyncHandler(handleGetTopUpStatus));
-app.post("/webhooks/bayar", asyncHandler(handleBayarWebhook));
 
 // Health check routes
 app.get("/health", handleHealthCheck);
@@ -394,6 +391,4 @@ process.on("SIGTERM", shutdown);
 app.listen(port, () => {
   console.log(`Upload API listening on http://localhost:${port}`);
   console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
-  startTopUpPoller();
-  console.log("MustikaPay top-up poller started (3-min interval)");
 });
