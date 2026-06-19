@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { createTopUp, getTopUpStatus } from '@/lib/api/topup';
+import { createTopUp, getTopUpStatus, checkTopUpNow } from '@/lib/api/topup';
 
 const formatRupiah = (value: number) =>
   new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(value);
@@ -20,6 +20,9 @@ export default function TopUpPage() {
   const [step, setStep] = useState<Step>('input');
   const [amount, setAmount] = useState('10000');
   const [error, setError] = useState<string | null>(null);
+  const [manualCheckLoading, setManualCheckLoading] = useState(false);
+  const [manualCheckCooldownUntil, setManualCheckCooldownUntil] = useState<number>(0);
+  const [manualCheckMessage, setManualCheckMessage] = useState<string | null>(null);
 
   // Order state
   const [orderId, setOrderId] = useState<string | null>(null);

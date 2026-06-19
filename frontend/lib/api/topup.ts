@@ -27,6 +27,7 @@ export type TopUpStatusResponse = {
   expiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  cooldownRemainingMs?: number;
 };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -61,4 +62,18 @@ export async function getTopUpStatus(reference: string): Promise<TopUpStatusResp
   }
 
   return (await response.json()) as TopUpStatusResponse;
+}
+
+export async function checkTopUpNow(reference: string): Promise<TopUpStatusResponse> {
+  const response = await fetch(`${apiBaseUrl}/topup/check/${encodeURIComponent(reference)}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || "Failed to check payment status");
+  }
+  return data;
 }
