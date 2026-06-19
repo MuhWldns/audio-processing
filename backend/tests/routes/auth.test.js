@@ -296,8 +296,6 @@ describe("GET /auth/me — Bearer support (regression)", () => {
 // run the cookie/session no-ops. Earlier version called req.logout() +
 // req.session.destroy() (no-ops for Bearer) and returned {ok:true} while the
 // user's refresh token stayed alive — a silent logout failure.
-import { handleLogout } from "../../src/controllers/authController.js";
-
 function buildLogoutApp() {
   const app = express();
   app.use(express.json());
