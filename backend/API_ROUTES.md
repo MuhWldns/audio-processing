@@ -199,9 +199,10 @@ Idempotent — succeeds whether or not the matching `Session` row exists. Rate l
 
 | Method | Path | Access | Validation | Description |
 |--------|------|--------|------------|-------------|
-| POST | `/topup/create` | Protected | Zod: `createTopUpSchema` | Create QRIS payment (provider via TOPUP_PROVIDER) |
-| GET | `/topup/status/:reference` | Protected | — | Poll status; MustikaPay: active confirm + 20-min auto-cancel |
-| POST | `/webhooks/bayar` | Public (signature verified) | — | Bayar.gg webhook (MustikaPay uses polling, no webhook) |
+| POST | `/topup/create` | Protected | Zod: `createTopUpSchema` | Create QRIS payment via MustikaPay |
+| GET | `/topup/status/:reference` | Protected | — | DB-only status check (no provider calls) |
+| POST | `/webhooks/mustika` | Public | — | MustikaPay webhook: acknowledge immediately, verify async |
+| POST | `/topup/check/:reference` | Protected | — | Manual check with 30s cooldown |
 
 ### POST /topup/create — Body
 
@@ -248,12 +249,12 @@ Idempotent — succeeds whether or not the matching `Session` row exists. Rate l
 }
 ```
 
-While the order is `PENDING`, the response includes `qrisImageUrl`, `paymentUrl`, and `expiresAt` so the frontend can re-render the QR after a reload. For MustikaPay orders this endpoint actively confirms against the gateway (`GET /api/v1/check/qris`): a confirmed payment flips `status` to `COMPLETED`, while an expired QR or an order past 20 minutes is marked `CANCELED` (auto-cancel).
+The status endpoint is **DB-only** — it does not call the MustikaPay API. Use `POST /topup/check/:reference` for manual confirmation with provider verification.
 
-### POST /webhooks/bayar
+### POST /webhooks/mustika
 
-**Headers:** `x-webhook-signature`, `x-webhook-timestamp`  
-**Behavior:** Atomic transaction — marks order COMPLETED + credits wallet + logs activity. Idempotent (duplicate webhooks are safely ignored).
+**Headers:** `none required (untrusted webhook)`, `verified via Check Status`  
+**Behavior:** Returns 200 immediately, then asynchronously verifies ref_no via GET /api/v1/check/qris before crediting wallet. Idempotent (duplicate webhooks are safely ignored).
 
 ---
 
@@ -511,7 +512,7 @@ All mutations recorded in `WalletTransaction` ledger with `balanceAfter` snapsho
 
 | Transaction Type | Trigger |
 |-----------------|---------|
-| `TOP_UP` | Bayar.gg webhook OR MustikaPay status check/poller confirms payment |
+| `TOP_UP` | MustikaPay webhook (verified via Check Status) or manual check confirms payment |
 | `PURCHASE` | Script checkout |
 | `AUDIO_CHARGE` | Paid audio upload (after free quota) |
 | `REFUND` | Admin refund |

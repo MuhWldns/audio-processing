@@ -22,7 +22,7 @@ tags:
   - name: History
     description: Audio upload history
   - name: TopUp
-    description: Wallet top-up via QRIS (Bayar.gg webhook or MustikaPay polling, selected by TOPUP_PROVIDER)
+    description: Wallet top-up via QRIS (MustikaPay webhook-first)
   - name: Products
     description: Script store product catalog (public)
   - name: Cart
@@ -611,8 +611,9 @@ paths:
         - cookieAuth: []
         - bearerAuth: []
       description: |
-        Creates a QRIS top-up order. Provider is selected by the server's TOPUP_PROVIDER env
-        ("bayar.gg" uses a signed webhook; "mustika" uses polling — no webhook).
+        Creates a QRIS top-up order via MustikaPay. Payment confirmation is webhook-first:
+        MustikaPay posts to /webhooks/mustika, backend acknowledges immediately,
+        then verifies ref_no via Check Status before crediting the wallet.
         Amount in Rupiah is credited to the wallet only after the payment is confirmed.
       requestBody:
         required: true
@@ -756,16 +757,16 @@ paths:
               example:
                 error: "Order not found"
 
-  /webhooks/bayar:
+  /webhooks/mustika:
     post:
       tags: [TopUp]
-      summary: Bayar.gg payment webhook
-      operationId: bayarWebhook
+      summary: MustikaPay QRIS webhook
+      operationId: mustikaWebhook
       security: []
       description: |
-        Webhook callback from Bayar.gg. Verifies HMAC SHA256 signature.
-        On "paid" status: credits wallet, creates transaction records.
-        Signature data format: "{invoiceId}|{status}|{finalAmount}|{timestamp}"
+        Webhook callback from MustikaPay. Acknowledges immediately (200) and processes verification asynchronously via Check Status.
+        On verified payment: credits wallet via atomic idempotent transaction.
+        
       parameters:
         - name: x-webhook-signature
           in: header
@@ -819,7 +820,7 @@ paths:
               customer_email: "test@example.com"
       responses:
         "200":
-          description: Webhook processed
+          description: Webhook acknowledged, processing asynchronously
           content:
             application/json:
               examples:
@@ -3030,7 +3031,7 @@ components:
           nullable: true
         invoiceId:
           type: string
-          description: Provider reference (Bayar.gg invoice_id or MustikaPay ref_no)
+          description: MustikaPay ref_no
         amount:
           type: integer
           description: Amount in Rupiah

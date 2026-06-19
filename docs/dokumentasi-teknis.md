@@ -9,7 +9,7 @@ RBX Royale adalah platform komersial berbasis web yang menyediakan dua layanan u
 1. **Script Store** - Marketplace untuk pembelian script Roblox berlisensi dengan sistem verifikasi real-time
 2. **Audio Processing** - Tools pemrosesan audio berbasis browser untuk kebutuhan game development
 
-Platform ini menggunakan arsitektur client-server dengan frontend Next.js dan backend Express.js, terintegrasi dengan payment gateway QRIS (Bayar.gg webhook & MustikaPay polling, dipilih via TOPUP_PROVIDER), object storage (Backblaze B2), dan email transaksional (Resend). Selain klien web, backend juga melayani klien mobile (Flutter) yang berautentikasi via Bearer JWT — kedua jalur (cookie untuk web, Bearer untuk mobile) berjalan paralel di endpoint yang sama.
+Platform ini menggunakan arsitektur client-server dengan frontend Next.js dan backend Express.js, terintegrasi dengan payment gateway QRIS MustikaPay (webhook-first, diverifikasi via Check Status), object storage (Backblaze B2), dan email transaksional (Resend). Selain klien web, backend juga melayani klien mobile (Flutter) yang berautentikasi via Bearer JWT — kedua jalur (cookie untuk web, Bearer untuk mobile) berjalan paralel di endpoint yang sama.
 
 ### 1.2 Tujuan Sistem
 
@@ -58,8 +58,7 @@ Platform ini menggunakan arsitektur client-server dengan frontend Next.js dan ba
 
 | Service | Fungsi |
 |---|---|
-| Bayar.gg | Payment gateway QRIS — webhook (HMAC) |
-| MustikaPay | Payment gateway QRIS — polling (tanpa signature) |
+| MustikaPay | Payment gateway QRIS — webhook-first (callback diverifikasi via Check Status) |
 | Backblaze B2 | Object storage untuk file script (S3-compatible) |
 | Resend | Email transaksional (notifikasi top-up dan pembelian) |
 | Google OAuth 2.0 | Autentikasi pengguna via Google |
@@ -110,11 +109,11 @@ Backend API (api-rbx.muhwldns.me:3001)
     |
     |--- MySQL (127.0.0.1:3306) - Docker container
     |--- Backblaze B2 (S3 API) - File storage
-    |--- Bayar.gg API - Payment gateway
+    |--- MustikaPay API - Payment gateway
     |--- Resend API - Email sending
     |
     | Webhook (inbound)
-    |<-- Bayar.gg (payment confirmation)
+    |<-- MustikaPay (webhook callback)
 `
 
 ### 3.3 Port Mapping
@@ -299,7 +298,7 @@ Menyimpan order top-up yang dibuat via payment gateway. Status berubah dari PEND
 | id | VARCHAR(191) | Tidak | cuid() | Primary key |
 | publicId | VARCHAR(32) | Ya | - | ID publik unik (format: TOP-IDR-YYMM-000001) |
 | userId | VARCHAR(191) | Tidak | - | FK ke User |
-| provider | VARCHAR(64) | Tidak | - | Payment provider (bayar.gg) |
+| provider | VARCHAR(64) | Tidak | - | Payment provider (mustika) |
 | externalId | VARCHAR(191) | Ya | - | Invoice ID dari provider (unik) |
 | amountRupiah | INTEGER | Tidak | - | Jumlah yang diminta |
 | finalAmount | INTEGER | Ya | - | Jumlah yang dibayar (termasuk unique code) |
@@ -661,9 +660,12 @@ Detail desain Bearer JWT, rotasi refresh token, dan deep link `rbxroyale://auth?
 
 | Method | Path | Auth | Deskripsi |
 |---|---|---|---|
-| POST | /topup/create | Login | Buat pembayaran QRIS (Bayar.gg atau MustikaPay, sesuai TOPUP_PROVIDER) |
-| GET | /topup/status/:reference | Login | Cek status; untuk MustikaPay aktif konfirmasi ke gateway + auto-cancel 20 menit |
-| POST | /webhooks/bayar | Publik (signature) | Webhook Bayar.gg saat pembayaran berhasil (tidak dipakai MustikaPay) |
+| POST | /topup/create | Login | Buat pembayaran QRIS via MustikaPay |
+| GET | /topup/status/:reference | Login | Cek status (DB-only, tidak panggil provider) |
+| POST | /webhooks/mustika | Publik | Webhook MustikaPay: acknowledge 200, verify async, credit wallet |
+| POST | /topup/check/:reference | Login | Manual check dengan provider (cooldown 30 detik) |
+| POST | /webhooks/mustika | Publik | Webhook MustikaPay: acknowledge 200, verify async, credit wallet |
+| POST | /topup/check/:reference | Login | Manual check dengan provider (cooldown 30 detik) |
 
 ### 5.4 Store - Produk
 
@@ -765,30 +767,33 @@ Logout mobile: `POST /auth/logout-mobile` (memerlukan Bearer) menghapus row `Ses
 
 ### 6.2 Alur Top-Up (QRIS)
 
-Top-up tersedia lewat dua payment gateway QRIS yang dipilih server via env `TOPUP_PROVIDER`:
-Bayar.gg (konfirmasi via webhook ber-signature) dan MustikaPay (konfirmasi via polling,
-karena webhook MustikaPay tidak ber-signature sehingga tidak dipercaya sebagai sumber kebenaran).
+Top-up menggunakan **MustikaPay** sebagai satu-satunya payment gateway QRIS dengan arsitektur **webhook-first**:
+MustikaPay mengirim callback ke /webhooks/mustika, backend langsung mengakui (200), lalu memverifikasi
+ref_no via GET /api/v1/check/qris sebelum mengkredit wallet.
 
-Alur umum (kedua provider):
+Alur:
 1. User memasukkan nominal di /topup (min Rp 1.000, maks Rp 500.000).
 2. Frontend POST /topup/create; backend memvalidasi via Zod.
-3. Backend memanggil gateway aktif untuk membuat QRIS, menyimpan TopUpOrder PENDING
-   (provider, externalId, metadata berisi qrUrl/paymentLink/expiresAt).
+3. Backend memanggil createQris() ke MustikaPay, menyimpan TopUpOrder PENDING
+   (provider, externalId=ref_no, metadata berisi qrUrl/paymentLink/expiresAt).
 4. Backend mengembalikan orderId, invoiceId, qrisImageUrl, paymentUrl, expiresAt.
-5. Frontend menampilkan QR, menyimpan orderId ke localStorage, dan polling /topup/status tiap 3 detik.
-   Saat app ditutup lalu dibuka lagi, order PENDING dipulihkan dari localStorage + status endpoint.
+5. Frontend menampilkan QR, menyimpan orderId ke localStorage, dan polling /topup/status tiap 3 detik
+   (DB-only, tidak memanggil MustikaPay API). Saat app ditutup lalu dibuka lagi, order PENDING
+   dipulihkan dari localStorage + status endpoint.
 
-Konfirmasi pembayaran:
-- Bayar.gg: gateway mengirim webhook POST /webhooks/bayar; backend verifikasi HMAC SHA256,
-  lalu kredit wallet (atomic, idempotent) via creditTopUpOrder.
-- MustikaPay: tidak ada webhook tepercaya. Konfirmasi terjadi lewat (a) poller background tiap 3 menit
-  yang hanya jalan bila ada order PENDING, dan (b) tombol "Saya sudah bayar" / polling status endpoint —
-  keduanya memanggil GET /api/v1/check/qris. Jika "success" → kredit (verifikasi nominal cocok);
-  jika "expired" atau order lewat 20 menit → order ditandai CANCELED (auto-cancel; MustikaPay tidak
-  punya endpoint cancel, QR mati sendiri via expiry=20).
+Konfirmasi pembayaran (webhook-first):
+- MustikaPay mengirim POST /webhooks/mustika saat pembayaran terdeteksi.
+- Backend langsung return 200 {"status":"received"}, lalu memproses secara async:
+  (a) cari order berdasarkan ref_no, (b) verifikasi via GET /api/v1/check/qris,
+  (c) bila status="success" dan nominal cocok → kredit wallet via creditVerifiedTopUp
+  (atomic, idempotent, CAS-based).
+- Bila webhook tidak terkirim (network issue), user bisa trigger manual check via
+  tombol "Saya sudah bayar" → POST /topup/check/:reference (cooldown 30 detik).
+- Auto-cancel: order PENDING yang belum terbayar setelah 25 menit otomatis di-CANCEL
+  oleh background auto-canceler (interval 5 menit, local DB-only).
 
-Keamanan: kredit wallet selalu lewat creditTopUpOrder — atomic (satu transaction), idempotent
-(tidak double-credit), dan menolak bila nominal terkonfirmasi tidak cocok dengan order.
+Keamanan: kredit wallet selalu lewat creditVerifiedTopUp — atomic (satu Prisma transaction),
+idempotent (CAS-based, tidak double-credit), dan fail-closed (nominal provider wajib cocok dengan order).
 
 > **Catatan — RBX Credit non-refundable.** Saldo wallet adalah **RBX Credit**, bukan Rupiah
 > dalam arti uang yang bisa dicairkan. Nominal Rupiah saat top-up hanya menentukan jumlah RBX
@@ -921,7 +926,7 @@ Audio processing dilakukan sepenuhnya di browser (client-side) menggunakan Web A
 
 ### 8.4 Payment Security
 
-- Webhook signature verification (HMAC SHA256)
+- Webhook verification via MustikaPay Check Status (GET /api/v1/check/qris)
 - Atomic database transactions untuk semua operasi wallet
 - Idempotent webhook processing (duplikat tidak menyebabkan double-credit)
 - Balance check di dalam transaction (prevent race condition)
@@ -962,10 +967,6 @@ Audio processing dilakukan sepenuhnya di browser (client-side) menggunakan Web A
 | DISCORD_CLIENT_ID | Discord OAuth client ID |
 | DISCORD_CLIENT_SECRET | Discord OAuth client secret |
 | DISCORD_CALLBACK_URL | Discord OAuth callback URL |
-| BAYARGG_API_KEY | Bayar.gg API key |
-| BAYARGG_WEBHOOK_SECRET | Bayar.gg webhook HMAC secret |
-| BAYARGG_WEBHOOK_URL | URL webhook yang didaftarkan ke Bayar.gg |
-| TOPUP_PROVIDER | Pemilih gateway top-up: "bayar.gg" atau "mustika" |
 | MUSTIKAPAY_API_KEY | MustikaPay API key (header X-Api-Key) |
 | MUSTIKAPAY_BASE_URL | Base URL MustikaPay (default https://mustikapayment.com) |
 | S3_ENDPOINT | Backblaze B2 endpoint |

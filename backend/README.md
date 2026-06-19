@@ -8,7 +8,7 @@ Backend API untuk platform RBX Royale. Menyediakan layanan audio processing, scr
 - **Framework:** Express.js
 - **Database:** MySQL via Prisma ORM
 - **Auth:** Dual-path — cookie session (web, Passport.js + express-session) and Bearer JWT (mobile/Flutter, HS256). Both paths converge at the same `requireAuth` middleware.
-- **Payment:** Bayar.gg (QRIS, webhook) & MustikaPay (QRIS, polling) — selected by `TOPUP_PROVIDER`
+- **Payment:** MustikaPay (QRIS, webhook-first) — webhook callback diverifikasi via Check Status sebelum wallet credit
 - **Testing:** Vitest + Supertest
 
 ## Prerequisites
@@ -58,18 +58,13 @@ npx prisma db push --force-reset
 
 ### 5. Setup Payment Gateway
 
-Backend mendukung dua payment gateway QRIS yang dipilih via env `TOPUP_PROVIDER` (`"bayar.gg"` atau `"mustika"`, default `"bayar.gg"`).
+Backend menggunakan **MustikaPay** sebagai satu-satunya payment gateway QRIS. Konfirmasi pembayaran menggunakan **webhook-first**: MustikaPay mengirim callback ke `/webhooks/mustika`, backend langsung mengakui (200), lalu memverifikasi `ref_no` via `GET /api/v1/check/qris` sebelum mengkredit wallet.
 
-**Bayar.gg (webhook):**
-1. Daftar di [Bayar.gg](https://www.bayar.gg/)
-2. Dapatkan API Key dan Webhook Secret
-3. Set webhook URL (untuk production) atau gunakan webhook test URL untuk development
-4. Copy credentials ke `.env` (`BAYARGG_API_KEY`, `BAYARGG_WEBHOOK_SECRET`, `BAYARGG_WEBHOOK_URL`)
-
-**MustikaPay (polling):**
 1. Dapatkan API Key dari MustikaPay
 2. Set `MUSTIKAPAY_API_KEY` dan opsional `MUSTIKAPAY_BASE_URL` (default `https://mustikapayment.com`)
-3. Tidak perlu webhook secret — konfirmasi pembayaran dilakukan via polling (poller background + status endpoint), bukan webhook
+3. Daftarkan webhook URL di dashboard MustikaPay: `https://api-rbx.muhwldns.me/webhooks/mustika`
+4. Status endpoint (`GET /topup/status/:reference`) **hanya membaca dari database** — tidak memanggil MustikaPay API
+5. Manual check tersedia via `POST /topup/check/:reference` dengan cooldown 30 detik
 
 ### 6. Setup Mobile Auth (Bearer JWT)
 
@@ -146,9 +141,11 @@ backend/
 │   │   ├── authService.js     # OAuth, session, quota
 │   │   ├── authTokenService.js # Mobile auth: sign/verify access JWT, issue/rotate/revoke refresh tokens, signed OAuth state
 │   │   ├── databaseService.js # Wallet operations (creditWallet, debitWallet)
-│   │   ├── bayarService.js    # Bayar.gg payment gateway
-│   │   ├── mustikaService.js  # MustikaPay payment gateway (QRIS, polling)
-│   │   ├── topupPoller.js     # Background reconciliation for MustikaPay orders
+│   │   ├── mustika/           # MustikaPay payment gateway (webhook-first)
+│   │   │   ├── client.js      # HTTP client: createQris, checkQrisStatus
+│   │   │   ├── credit.js      # Atomic verified top-up credit transaction
+│   │   │   ├── webhook.js     # Webhook verification + async processing
+│   │   │   └── reconcile.js   # Manual check + local auto-cancel
 │   │   ├── walletService.js   # Audio charge utilities
 │   │   ├── pricingService.js  # Duration-based pricing
 │   │   └── uploadService.js   # File upload handling
